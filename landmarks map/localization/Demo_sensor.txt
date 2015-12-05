@@ -1,0 +1,80 @@
+% Demo_sensor
+% Author : Ivan A. Calle Flores
+% Description: Manejo del sensor de deteccion de marcas
+clc; clear all; close all
+
+%----------------------------------------------------------------------%
+% 1. CONFIGURACION DEL MAPA DE REFERENCIAS "LANDMARKS"
+%----------------------------------------------------------------------%
+%  ESTABLECEMOS EL MAPA
+mapa = ...
+    [-1.0   -2.0;
+    1.0  -2.0;
+    3.0  -2.0;
+    5.5  -2.0;
+    8.5  -2.0;
+    8.5   0.0;
+    8.5   3.0;
+    5.5   3.0;
+    3.0   3.0;
+    1.0   3.0;
+   -1.0   3.0]';                          
+
+%  ESTABLECEMOS LAS MARCAS 'ETIQUETAS' DE LAS REFERENCIAS - "SIGNATURES"
+marcas_mapa = 1:size(mapa,2);
+
+%  MAPA FINAL[3xNlandmarks]
+mapa = [mapa;marcas_mapa];
+
+
+%----------------------------------------------------------------------%
+% 2. CONFIGURACION DE LA FIGURA
+%----------------------------------------------------------------------%
+fig1 = figure;    
+hold on
+xlabel('x(m)')
+ylabel('y(m)')
+
+
+%----------------------------------------------------------------------%
+% 3. PLOTEAMOS EL ENTORNO
+%----------------------------------------------------------------------%
+plot(mapa(1,:),mapa(2,:), 'r+','MarkerSize',10,'LineWidth',2)
+axis([-2  10 -4  5])
+
+
+%----------------------------------------------------------------------%
+% 4. PARAMETROS DEL SENSOR "RANGE-BEARING"
+%----------------------------------------------------------------------%
+MAX_RANGE = 1.5;                    % Maxima distancia
+sigmaR = 0.1;                       % Desviaciones estandar
+sigmaB = (3.0*pi/180);       
+sigmaS = 0.05;               
+std_sensor = [sigmaR;sigmaB;sigmaS];
+
+%  HANDLERS PARA ANIMAR LAS MEDIDAS DE LOS SENSORES
+K = 5;
+handle_sensor = zeros(1,K);
+for f=1:K
+    handle_sensor(f) = plot(0,0, 'm');
+end
+
+
+
+%----------------------------------------------------------------------%
+% 5. PARAMETROS DEL ROBOT
+%----------------------------------------------------------------------%
+%  PARAMETROS MECANICOS
+D = 0.1;        % Diametro de las ruedas
+L = 0.15;       % Distancia de las ruedas al punto central del robot
+
+
+%----------------------------------------------------------------------%
+% 6. CONFIGURACION INICIAL DEL ROBOT
+%----------------------------------------------------------------------%
+%  6.1. CAPTURA DE LA POSICION
+pos = ginput(1);
+
+%  6.2. CONFIGURACION
+x = [pos(1);pos(2);0*pi/4];
+plot_robot(x, L, 'r')

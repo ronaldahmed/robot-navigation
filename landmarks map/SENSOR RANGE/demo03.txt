@@ -1,0 +1,99 @@
+% Demo_03: Probabilidad de las mediciones
+% Author : Ivan A. Calle Flores
+% Description: Muestra como usar la funcion "landmark_model_known_
+%              correspondence" para calcular las mediciones de un sensor 
+clc; clear all; close all
+
+%----------------------------------------------------------------------%
+% 1. CONFIGURACION INICIAL
+%----------------------------------------------------------------------%
+%  1.1. CONFIGURACION DE LA FIGURA
+fig = figure;
+set(fig,'Name','Probabilidades de las mediciones del sensor','position',[10 50 500 500])
+axis([-12 13 -12 13])
+axis square
+xlabel('x(m)')
+ylabel('y(m)')
+grid on
+hold on
+
+
+%----------------------------------------------------------------------%
+% 2. CONFIGURACION DEL MAPA DE CARACTERISTICAS "LANDMARKS"
+%----------------------------------------------------------------------%
+%  2.1. DEFINIMOS LAS POSICIONES Y ETIQUETAS
+landmark_01 = [5; 0; 0.5];
+landmark_02 = [2; 4; 0.1];
+landmark_03 = [2; -4; 1.0];
+
+%  2.2. MATRIX DE CARACTERISTICAS
+landmarks_map = [landmark_01 landmark_02 landmark_03];  
+
+%  2.3. PLOTEAMOS EL MAPA
+plot(landmarks_map(1,:), landmarks_map(2,:),'+r','MarkerSize',20, 'LineWidth', 3)
+
+
+%----------------------------------------------------------------------%
+% 3. CONFIGURACION DEL ROBOT
+%----------------------------------------------------------------------%
+%  3.1. CONFIGURACION
+xx = 0;
+yy = 0;
+theta = 0;
+x = [xx;yy;theta];
+
+%  3.2. PLOTEAMOS LA CONFIGURACION
+plot_robot(x, 0.3, 'm')
+axis([-1  11  -6  6])
+
+
+%----------------------------------------------------------------------%
+% 4. PARAMETROS DEL SENSOR
+%----------------------------------------------------------------------%
+%  4.1. PARAMETROS DE RUIDO(desviaciones estandar)
+sigmaR = 0.1;              % En el rango(m)
+sigmaB = (3.0*pi/180);      % En la orientacion(rad)
+sigmaS = 0.05;              % En la eqiqueta
+std_sensor = [sigmaR;sigmaB;sigmaS];    % Vector de ruidos
+
+
+
+%----------------------------------------------------------------------%
+% 5. MEDICIONES IDEALES Y REALES Y SUS PROBABILIDADES
+%----------------------------------------------------------------------%
+K = size(landmarks_map,2);
+for k = 1:K
+    
+    fprintf('\nREFERENCIA: %d\n', k)
+    
+    % 5.1. SELEECION DE LA REFERENCIA
+    landmark = landmarks_map(:,k);
+    plot(landmark(1), landmark(2),'+b','MarkerSize',20, 'LineWidth', 3)
+
+
+    
+    %  5.2. MEDIDA IDEAL Y SU PROBABILIDAD
+    %   -> Calculo de la medida ideal
+    zideal = noise_free_range_bearing_model(x, landmark);
+    fprintf(' Medicion ideal:\n');
+    fprintf('  rango = %4.4f, orientacion = %4.4f, etiqueta = %4.4f\n', zideal);
+    %   -> Probabilidad de la medida ideal
+    q = landmark_model_known_correspondence(zideal,x,landmark,std_sensor);
+    fprintf('  Probability of the measurement = %4.4f\n', q);
+
+    
+    %  5.2. LIKELIHOOD OF A REAL MEASUREMENT
+    %     -> Take a meassure from the current pose.
+    zreal = range_bearing_model(x, landmark, std_sensor);
+    fprintf('\n')
+    fprintf(' Real measurement from the actual pose:\n');
+    fprintf('  range = %4.4f, bearing = %4.4f, signature = %4.4f\n', zreal);
+    %     -> Compute the likelihood of the measurement
+    q = landmark_model_known_correspondence(zreal,x,landmark,std_sensor);
+    fprintf('  Probability of the measurement = %4.4f\n', q);
+    fprintf('\n')
+    
+    
+    pause
+    plot(landmark(1), landmark(2),'+r','MarkerSize',20, 'LineWidth', 3)
+end
