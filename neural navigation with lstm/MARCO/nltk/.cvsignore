@@ -1,0 +1,18 @@
+*.class
+*.hpp
+*.fasl
+"Backup of *"
+~$*
+*.C
+*.H
+*.d
+*$.wrl
+*.out
+*.pyc
+*.log
+.thumbnails
+*.bbl
+*.blg
+*.dvi
+*.aux
+*.flc

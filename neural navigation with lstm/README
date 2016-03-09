@@ -1,0 +1,17 @@
+Date: August, 2011
+Author: David Chen (dlcc@cs.utexas.edu)
+
+The original MARCO code and the instructor/follower data were all compiled by Matt MacMahon(matt@macmahon.org).  Please contact him directly if you have questions about his MARCO system or the original data.  You can also find out more information as well as download the original data from his website:
+
+http://robotics.csres.utexas.edu/~adastra/
+
+--------------------------------------------------------
+
+The code and data released here were used in our experiments as mentioned in our AAAI 2011 paper:
+
+http://www.cs.utexas.edu/users/ai-lab/pub-view.php?PubID=127067
+
+To find out more about our project on learning to interpret natural language navigation instructions, please visit our website:
+
+http://www.cs.utexas.edu/~ml/clamp/navigation/
+

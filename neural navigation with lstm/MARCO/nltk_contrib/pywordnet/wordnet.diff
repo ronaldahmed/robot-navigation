@@ -1,0 +1,105 @@
+*** wordnet-new.py	2005-01-31 15:17:12.000000000 -0700
+--- wordnet.py	2005-01-31 15:25:50.937500000 -0700
+***************
+*** 1262,1267 ****
+--- 1262,1268 ----
+     
+      def __init__(this, capacity):
+          this.capacity = capacity
++         this.enable()
+          this.clear()
+      
+      def clear(this):
+***************
+*** 1280,1285 ****
+--- 1281,1287 ----
+              this.oldestTimestamp = this.oldestTimestamp + 1
+      
+      def setCapacity(this, capacity):
++         this.enable()
+          if capacity == 0:
+              this.clear()
+          else:
+***************
+*** 1287,1293 ****
+              while len(this.values) > this.capacity:
+                  this.removeOldestEntry()    
+      
+!     def get(this, key, loadfn=None):
+          value = None
+          if this.values:
+              pair = this.values.get(key)
+--- 1289,1295 ----
+              while len(this.values) > this.capacity:
+                  this.removeOldestEntry()    
+      
+!     def _trueget(this, key, loadfn=None):
+          value = None
+          if this.values:
+              pair = this.values.get(key)
+***************
+*** 1305,1343 ****
+                  this.removeOldestEntry()
+          return value
+  
+! 
+! class _NullCache:
+!     """A NullCache implements the Cache interface (the interface that
+!     LRUCache implements), but doesn't store any values."""
+!     
+!     def clear():
+!         pass
+!     
+!     def get(this, key, loadfn=None):
+          return loadfn and loadfn()
+  
+  
+! DEFAULT_CACHE_CAPACITY = 1000
+! _entityCache = _LRUCache(DEFAULT_CACHE_CAPACITY)
+  
+- def disableCache():
+-     """Disable the entity cache."""
+-     _entityCache = _NullCache()
+- 
+- def enableCache():
+-     """Enable the entity cache."""
+-     if not isinstance(_entityCache, LRUCache):
+-         _entityCache = _LRUCache(size)
+- 
+- def clearCache():
+-     """Clear the entity cache."""
+-     _entityCache.clear()
+- 
+- def setCacheCapacity(capacity=DEFAULT_CACHE_CAPACITY):
+-     """Set the capacity of the entity cache."""
+-     enableCache()
+-     _entityCache.setCapacity(capacity)
+  
+  setCacheSize = setCacheCapacity # for compatability with version 1.0
+  
+  
+--- 1307,1330 ----
+                  this.removeOldestEntry()
+          return value
+  
+!     def _nullget(self, key, loadfn=None):
+          return loadfn and loadfn()
+  
++     def enable(self):
++         self.get = self._trueget
+  
+!     def disable(self):
+!         self.clear()
+!         self.get = self._nullget
+  
+  
++ DEFAULT_CACHE_CAPACITY = 1000
++ _entityCache = _LRUCache(DEFAULT_CACHE_CAPACITY)
++ # for backwards compatibility
++ disableCache = _entityCache.disable
++ enableCache = _entityCache.enable
++ clearCache = _entityCache.clear
++ setCacheCapacity = _entityCache.setCapacity
+  setCacheSize = setCacheCapacity # for compatability with version 1.0
+  
+  

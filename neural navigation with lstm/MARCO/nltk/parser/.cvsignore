@@ -1,0 +1,19 @@
+"Backup of *"
+*$.wrl
+*.C
+*.H
+*.aux
+*.bbl
+*.blg
+*.class
+*.d
+*.dvi
+*.fasl
+*.hpp
+*.log
+*.out
+*.prof
+*.pyc
+.thumbnails
+probabilistic.py.flc
+~$*
