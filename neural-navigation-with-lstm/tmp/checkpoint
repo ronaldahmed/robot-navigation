@@ -1,0 +1,2 @@
+model_checkpoint_path: "neural_walker.ckpt-0"
+all_model_checkpoint_paths: "neural_walker.ckpt-0"
