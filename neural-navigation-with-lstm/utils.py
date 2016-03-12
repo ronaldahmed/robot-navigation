@@ -108,48 +108,6 @@ def get_landmark_set(_map):
 	return feat_set
 
 
-def get_world_context(_map,place,pose):
-	# get bao-of-words repr of wold context from (place,pose)
-	# return: [forward],[left],[right] | all Meaning objects
-	views = _map.getView((place,pose))
-	views = views[0][0] # format: [(views,prob)]
-	fw = set()
-	lf = [views[0][0]]	# only left info from first view
-	rg = [views[0][2]]	# only left info from first view
-	for view in views:
-		fw.add(view[1])	# add mid info to forward
-		fw.add(view[3])
-		fw.add(view[4])
-		fw.add(view[5])
-	fw = list(fw)
-	return fw,lf,rg
-
-def get_batch_world_context(sample_batch_roll,_t,_maps,feature_dict,batch_size):
-	"""
-	args:
-	sample_batch_roll: placeholder of shape [batch_size,1] with Sample obj data for ONE roll
-	_t: time step (for path indexing)
-	_map: {name: Map object}
-	num_feats: number of map features 
-	batch_size: <>
-
-	return : world_state vector y [batch_size x 3 * num_feats]
-	"""
-	num_feats = len(feature_dict)
-	roll_y = np.zeros(shape=(batch_size,num_feats*3),dtype=np.float32)
-	for b in xrange(batch_size):
-		map_name = sample_batch_roll[b]._map_name
-		if _t < len(sample_batch_roll[b]._path):
-			# check world state for valid step
-			x,y,pose = sample_batch_roll[b]._path[_t]
-			place = _maps[map_name].locationByCoord[(x,y)]
-			fw,lf,rg = get_world_context(_maps[map_name],place,pose)	# includes fw, left and right
-			fw = [feature_dict[feat] 					for feat in fw]
-			lf = [feature_dict[feat] + num_feats 	for feat in lf]
-			rg = [feature_dict[feat] + 2*num_feats for feat in rg]
-			roll_y[b][fw+lf+rg] = 1.0
-	return roll_y
-
 def verbose_actions(actions):
 	#print string command for each action
 	return [actions_str[act_id] for act_id in actions]
@@ -416,7 +374,7 @@ def reformat_wordid(data,vocab):
 
 class BatchGenerator:
 	def __init__(self,data,batch_size,vocab):
-		self._encoder_unrollings = 48		# experimental
+		self._encoder_unrollings = 49		# experimental
 		self._decoder_unrollings = 31	# experimental
 		self._data = data 	# format: [Sample(word_id format)]
 		self._data_size = len(data)
@@ -444,6 +402,7 @@ class BatchGenerator:
 			# One-hot formatting for ENCODER
 			for roll in xrange(len(encoder_seq)):
 				encoder_batch[roll][b,encoder_seq[roll]] = 1.0
+
 			# ZERO PADDING: if outside len of enc, leave empty (0s)
 			## Action_id formatting for DECODER
 			for i,act in enumerate(decoder_seq):
@@ -467,6 +426,93 @@ class BatchGenerator:
 			print("="*70)
 		#END-FOR-BATCH_SIZE
 
+
+##########################################################################################
+
+def get_world_context_id(_map,place,pose):
+	# get bao-of-words repr of wold context from (place,pose)
+	# return: [forward],[left],[right] | all Meaning objects
+	views = _map.getView((place,pose))
+	views = views[0][0] # format: [(views,prob)]
+	fw = set()
+	lf = [views[0][0]]	# only left info from first view
+	rg = [views[0][2]]	# only left info from first view
+	for view in views:
+		fw.add(view[1])	# add mid info to forward
+		fw.add(view[3])
+		fw.add(view[4])
+		fw.add(view[5])
+	fw = list(fw)
+	return fw,lf,rg
+
+def get_sparse_world_context(_map,place,pose,feature_dict):
+	num_feats = len(feature_dict)
+	y_t = np.zeros(shape=(1,3*num_feats),dtype=np.float32)
+	fw,lf,rg = get_world_context_id(_map,place,pose)
+	fw = [feature_dict[feat] 				for feat in fw]
+	lf = [feature_dict[feat] + num_feats 	for feat in lf]
+	rg = [feature_dict[feat] + 2*num_feats  for feat in rg]
+	y_t[fw+lf+rg] = 1.0
+	return y_t
+
+def get_batch_world_context(sample_batch_roll,_t,_maps,feature_dict,batch_size):
+	"""
+	args:
+	sample_batch_roll: placeholder of shape [batch_size,1] with Sample obj data for ONE roll
+	_t: time step (for path indexing)
+	_map: {name: Map object}
+	num_feats: number of map features 
+	batch_size: <>
+
+	return : world_state vector y [batch_size x 3 * num_feats]
+	"""
+	num_feats = len(feature_dict)
+	roll_y = np.zeros(shape=(batch_size,num_feats*3),dtype=np.float32)
+	for b in xrange(batch_size):
+		map_name = sample_batch_roll[b]._map_name
+		if _t < len(sample_batch_roll[b]._path):
+			# check world state for valid step
+			x,y,pose = sample_batch_roll[b]._path[_t]
+			place = _maps[map_name].locationByCoord[(x,y)]
+			roll_y = get_sparse_world_context(_maps[map_name],place,pose,feature_dict)
+	return roll_y
+
+
+def move(state,action,_map):
+	"""
+	state; (xg,yg,pose)
+	action: action_id
+	_map: map object form getMap.*
+	return: (next_loc,next_pos) next position state after applying action
+	"""
+	if action==STOP or action==PAD_decode:
+		return -1
+
+	xg,yg,pose = state
+	
+	if action==FW:
+		nx = ny = -1
+		if pose==0:
+			nx,ny = xg-2,yg
+		elif pose==1:
+			nx,ny = xg,yg+2
+		elif pose==2:
+			nx,ny = xg+2,yg
+		else: #pose==3
+			nx,ny = xg,yg-2
+		if (nx,ny) in _map.locationByCoord:
+			return nx,ny,pose
+		else:
+			return -1
+	elif action==L:
+		return xg,yg,(pose-1)% _map.NumPoses
+	elif action==R:
+		return xg,yg,(pose+1)% _map.NumPoses
+
+
+##########################################################################################
+
+##########################################################################################
 
 """
 map_data = get_data()
@@ -495,4 +541,8 @@ ipdb.set_trace()
 #enc,dec,samples = batch_gen.get_batch()
 #batch_gen.batch2string(enc,dec)
 
+#ipdb.set_trace()
+
+#mm = getMapGrid()
+#state = move((1,2),FW,mm)
 #ipdb.set_trace()
