@@ -90,7 +90,7 @@ class NavModel(object):
 			self._encoder_inputs.append( tf.placeholder(tf.float32,shape=[self._batch_size,self._vocab_size], name='x') )
 		for i in xrange(self._decoder_unrollings):
 			self._decoder_outputs.append( tf.placeholder(tf.int32,shape=[self._batch_size], name='actions') )
-			self._world_state_vectors.append( tf.placeholder(tf.float32,shape=[self._batch_size,self._y_size], name='wolrd_vect') )
+			self._world_state_vectors.append( tf.placeholder(tf.float32,shape=[self._batch_size,self._y_size], name='world_vect') )
 
 		## TESTING / VALIDATION Placeholders
 		self._test_encoder_inputs = []
@@ -99,7 +99,7 @@ class NavModel(object):
 		self._test_decoder_output = tf.placeholder(tf.float32,shape=[1,self._num_actions], name='test_action_t')
 		self._test_st = tf.placeholder(tf.float32, [1, self._n_hidden], name='test_st')
 		self._test_ct = tf.placeholder(tf.float32, [1, self._n_hidden], name='test_ct')
-		self._test_yt = tf.placeholder(tf.float32, [1, self._n_hidden], name='test_yt')
+		self._test_yt = tf.placeholder(tf.float32, [1, self._y_size], name='test_yt')
 
 		with tf.name_scope('Weights') as scope:
 			# Alignment model weights
@@ -176,9 +176,9 @@ class NavModel(object):
 
 		# Alignment model
 		with tf.name_scope('Aligner') as scope:
-			def context_vector(s_prev):
+			def context_vector(s_prev,h_encoder,ux_vh,encoder_inputs,batch_size):
 				# alignment model
-				beta = [tf.matmul(tf.tanh(tf.matmul(s_prev,W_a) + u_v + bias_a),v_a) + tanh_bias_a for u_v in U_V_precalc]
+				beta = [tf.matmul(tf.tanh(tf.matmul(s_prev,W_a) + u_v + bias_a),v_a) + tanh_bias_a for u_v in ux_vh]
 				beta = tf.concat(1,beta, name='beta')
 				# weights of each (xj,hj)
 				alpha = tf.nn.softmax(beta)	# shape: batch_size x encoder_unroll
@@ -189,17 +189,17 @@ class NavModel(object):
 					z_t += alpha[j] * xh
 				return z_t
 
-			def precalc_Ux_Vh(encoder_inputs):
+			def precalc_Ux_Vh(encoder_inputs,h_enc):
 				ux_vh = []
 				for i in xrange(self._encoder_unrollings):
-					ux_vh.append( tf.matmul(encoder_inputs[i],U_a) + tf.matmul(h_encoder[i],V_a) )
+					ux_vh.append( tf.matmul(encoder_inputs[i],U_a) + tf.matmul(h_enc[i],V_a) )
 				return ux_vh
 
 		#######################################################################################################################
 
 		def model_encoder_decoder(encoder_inputs, world_state_vectors, batch_size):
 			h_encoder = encoder(encoder_inputs)	
-			U_V_precalc = precalc_Ux_Vh(encoder_inputs)
+			U_V_precalc = precalc_Ux_Vh(encoder_inputs,h_encoder)
 			
 			## Decoder loop
 			with tf.name_scope('Decoder') as scope:
@@ -210,14 +210,13 @@ class NavModel(object):
 
 				logits = [] # logits per rolling
 				predictions = []
-				current_position = self._initial_position
 				for i in xrange(self._decoder_unrollings):
 					# world state vector at step i
 					y_t = world_state_vectors[i]	# batch_size x num_local_feats (feat_id format)
 					# embeed world vector | relu nodes
 					ey = tf.nn.relu(tf.matmul(y_t,w_emby) + b_emby, name='Ey')
 					# context vector
-					z_t = context_vector(s_t)
+					z_t = context_vector(s_t,h_encoder,U_V_precalc,encoder_inputs,batch_size)
 					# Dropout
 					ey = tf.nn.dropout(ey, keep_prob)
 					s_t,c_t = decoder_cell(ey,s_t,z_t,c_t)
@@ -270,18 +269,17 @@ class NavModel(object):
 			##############################################################################################################
 			## Testing
 			test_h = encoder(self._test_encoder_inputs,1,False)
-			test_ux_vh = precalc_Ux_Vh(self._test_encoder_inputs)
+			test_ux_vh = precalc_Ux_Vh(self._test_encoder_inputs,test_h)
 			# embeed world vector | relu nodes
 			ey = tf.nn.relu(tf.matmul(self._test_yt,w_emby) + b_emby, name='Ey_test')
 			# context vector
-			z_t = context_vector(self._test_st)
+			z_t = context_vector(self._test_st,test_h,test_ux_vh,self._test_encoder_inputs,1)
 			self._next_st,self._next_ct = decoder_cell(ey, self._test_st, z_t, self._test_ct)
 			# Hidden linear layer before output, proyects z_t,y_t, and s_t to an embeeding-size layer
 			hq = ey + tf.matmul(self._next_st,ws) + tf.matmul(z_t,wz) + b_q
 			logit = tf.matmul(hq,wo) + b_o
 			self._test_prediction = tf.nn.softmax(logit,name='inf_prediction')
-			self._test_loss = tf.nn.softmax_cross_entropy_with_logits([logit],self._test_decoder_output, name="test_loss")
-
+			self._test_loss = tf.nn.softmax_cross_entropy_with_logits(logit,self._test_decoder_output, name="test_loss")
 
 		# Summaries
 		clipped_resh = [tf.reshape(tensor,[-1]) for tensor in self._clipped_gradients]
@@ -388,18 +386,18 @@ class NavModel(object):
 		for i in xrange(self._decoder_unrollings):
 			# one hot vector of current true action
 			onehot_act = np.zeros((1,self._num_actions),dtype=np.float32)
-			onehot_act[decoder_output[i]] = 1.0
+			onehot_act[0,decoder_output[i]] = 1.0
 			# get world vector for current position
 			x,y,pose = state
 			place = _map.locationByCoord[(x,y)]
-			y_t = get_sparse_world_context(_map, place, pose, self._map_feature_dict)
+			yt = get_sparse_world_context(_map, place, pose, self._map_feature_dict)
 			# set placeholder for current roll
 			feed_dict[self._test_decoder_output] = onehot_act
 			feed_dict[self._test_st] = st
 			feed_dict[self._test_ct] = ct
 			feed_dict[self._test_yt] = yt
 
-			output_roll = [
+			output_feed = [
 				self._next_st,
 				self._next_ct,
 				self._test_prediction,
@@ -418,4 +416,5 @@ class NavModel(object):
 		if state != -1:
 			prev_state = state
 		loss /= (n_preds if n_preds!=-1 else self._decoder_unrollings)
+
 		return loss,end_state==prev_state	# for single-sentence

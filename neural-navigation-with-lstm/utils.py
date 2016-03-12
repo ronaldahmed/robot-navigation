@@ -452,7 +452,7 @@ def get_sparse_world_context(_map,place,pose,feature_dict):
 	fw = [feature_dict[feat] 				for feat in fw]
 	lf = [feature_dict[feat] + num_feats 	for feat in lf]
 	rg = [feature_dict[feat] + 2*num_feats  for feat in rg]
-	y_t[fw+lf+rg] = 1.0
+	y_t[0,fw+lf+rg] = 1.0
 	return y_t
 
 def get_batch_world_context(sample_batch_roll,_t,_maps,feature_dict,batch_size):
@@ -474,7 +474,7 @@ def get_batch_world_context(sample_batch_roll,_t,_maps,feature_dict,batch_size):
 			# check world state for valid step
 			x,y,pose = sample_batch_roll[b]._path[_t]
 			place = _maps[map_name].locationByCoord[(x,y)]
-			roll_y = get_sparse_world_context(_maps[map_name],place,pose,feature_dict)
+			roll_y[b,:] = get_sparse_world_context(_maps[map_name],place,pose,feature_dict)
 	return roll_y
 
 
