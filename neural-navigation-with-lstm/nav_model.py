@@ -23,7 +23,7 @@ class Config(object):
 	def __init__(self,batch_size,
 							vocab_size,
 							num_nodes=100,
-							learning_rate=0.1,
+							learning_rate=0.001,
 							learning_rate_decay_factor=0.1,
 							embedding_world_state_size=30,
 							dropout_rate=1.0
@@ -264,7 +264,7 @@ class NavModel(object):
 			gradients, v = zip(*optimizer.compute_gradients(self._loss,params))
 			self._clipped_gradients, self._global_norm = tf.clip_by_global_norm(gradients, self._max_gradient_norm)
 			# Apply clipped gradients
-			optimizer = optimizer.apply_gradients( zip(self._clipped_gradients, v), global_step=self._global_step )
+			self._optimizer = optimizer.apply_gradients( zip(self._clipped_gradients, v), global_step=self._global_step )
 
 			##############################################################################################################
 			## Testing
@@ -290,7 +290,7 @@ class NavModel(object):
 		_ = tf.histogram_summary('clipped_gradients', clipped_resh)
 
 		# checkpoint saver
-		self.saver = tf.train.Saver(tf.all_variables())
+		#self.saver = tf.train.Saver(tf.all_variables())
 		self._merged = tf.merge_all_summaries()
 		
 	#END-INIT
@@ -353,8 +353,9 @@ class NavModel(object):
 			feed_dict[self._world_state_vectors[i]] = y_roll
 		
 		output_feed = [
-			self._merged,
+			self._optimizer,
 			self._loss,
+			self._merged,
 		] + self._train_predictions
 		outputs = session.run(output_feed,feed_dict=feed_dict)
 
@@ -417,4 +418,4 @@ class NavModel(object):
 			prev_state = state
 		loss /= (n_preds if n_preds!=-1 else self._decoder_unrollings)
 
-		return loss,end_state==prev_state	# for single-sentence
+		return loss,int(end_state==prev_state)	# for single-sentence
