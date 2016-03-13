@@ -1,5 +1,4 @@
 import tensorflow as tf
-from tensorflow.models.rnn.rnn import bidirectional_rnn
 import numpy as np
 import sys,os
 import ipdb
@@ -10,7 +9,7 @@ from POMDP.MarkovLoc_Jelly import getMapJelly
 from POMDP.MarkovLoc_L import getMapL
 
 from utils import get_landmark_set, get_batch_world_context, get_sparse_world_context, move
-
+from custom_nn import *
 
 ## max instructions length: 48
 ## max actions length: 31
@@ -23,7 +22,7 @@ class Config(object):
 	def __init__(self,batch_size,
 							vocab_size,
 							num_nodes=100,
-							learning_rate=0.001,
+							learning_rate=0.01,
 							learning_rate_decay_factor=0.1,
 							embedding_world_state_size=30,
 							dropout_rate=1.0
@@ -134,6 +133,11 @@ class NavModel(object):
 			# Embedding weight
 			w_emby = tf.Variable(tf.truncated_normal([self._y_size,self._embedding_world_state_size], -0.1, 0.1), name='Ey_w')
 			b_emby = tf.Variable(tf.zeros([1, self._embedding_world_state_size]), name='Ey_b')
+			# Encoder - decoder transition
+			w_trans_s = tf.Variable(tf.truncated_normal([self._n_hidden, self._n_hidden], -0.1, 0.1), name='w_trans_s')
+			b_trans_s = tf.Variable(tf.zeros([1,self._n_hidden	]), name='b_trans_s')
+			w_trans_c = tf.Variable(tf.truncated_normal([self._n_hidden, self._n_hidden], -0.1, 0.1), name='w_trans_c')
+			b_trans_c = tf.Variable(tf.zeros([1,self._n_hidden	]), name='b_trans_c')
 			# Action Classifier weights and biases.
 			ws = tf.Variable(tf.truncated_normal([self._n_hidden							 , self._embedding_world_state_size	], -0.1, 0.1), name='ws')
 			wz = tf.Variable(tf.truncated_normal([2*self._n_hidden + self._vocab_size, self._embedding_world_state_size	], -0.1, 0.1), name='wz')
@@ -156,12 +160,12 @@ class NavModel(object):
 					bw_cell = tf.nn.rnn_cell.DropoutWrapper(
 											bw_cell, output_keep_prob=keep_prob)
 
-				h = bidirectional_rnn(fw_cell,bw_cell,
+				h,c1,h1 = bidirectional_rnn(fw_cell,bw_cell,
 											 encoder_inputs,
 											 dtype=tf.float32,
 											 sequence_length = self._encoder_unrollings * tf.ones([batch_size],tf.int64)
 											 )
-				return h
+				return h,c1,h1
 
 		def decoder_cell(i, o, z, c_prev):
 			input_gate  = tf.sigmoid(tf.matmul(i, ix) + tf.matmul(o, im) + tf.matmul(z,iz) + ib)
@@ -198,14 +202,14 @@ class NavModel(object):
 		#######################################################################################################################
 
 		def model_encoder_decoder(encoder_inputs, world_state_vectors, batch_size):
-			h_encoder = encoder(encoder_inputs)	
+			h_encoder,c1,h1 = encoder(encoder_inputs)	
 			U_V_precalc = precalc_Ux_Vh(encoder_inputs,h_encoder)
 			
 			## Decoder loop
 			with tf.name_scope('Decoder') as scope:
 				# Initial states
-				s_t = tf.Variable(tf.zeros([batch_size, self._n_hidden]), name='s_0')
-				c_t = tf.Variable(tf.zeros([batch_size, self._n_hidden]), name='c_0')
+				s_t = tf.tanh( tf.matmul(h1,w_trans_s)+b_trans_s , name='s_0')
+				c_t = tf.tanh( tf.matmul(c1,w_trans_c)+b_trans_c , name='c_0')
 				# Definition of the cell computation.
 
 				logits = [] # logits per rolling
@@ -268,7 +272,10 @@ class NavModel(object):
 
 			##############################################################################################################
 			## Testing
-			test_h = encoder(self._test_encoder_inputs,1,False)
+			test_h,c1,h1 = encoder(self._test_encoder_inputs,1,False)
+			self._test_s0 = tf.tanh( tf.matmul(h1,w_trans_s) , name='test_s0')
+			self._test_c0 = tf.tanh( tf.matmul(c1,w_trans_c)+b_trans_c , name='test_c0')
+
 			test_ux_vh = precalc_Ux_Vh(self._test_encoder_inputs,test_h)
 			# embeed world vector | relu nodes
 			ey = tf.nn.relu(tf.matmul(self._test_yt,w_emby) + b_emby, name='Ey_test')
@@ -312,7 +319,6 @@ class NavModel(object):
 			if state == -1:
 				return prev_state
 		return state
-
 
 	def get_endpoint_accuracy(self,samples,predictions):
 		"""
@@ -376,8 +382,7 @@ class NavModel(object):
 			feed_dict[self._test_encoder_inputs[i]] = encoder_input[i]
 
 		# initial values for cell variables
-		st = np.zeros((1,self._n_hidden),dtype=np.float32)
-		ct = np.zeros((1,self._n_hidden),dtype=np.float32)
+		[st,ct] = session.run([self._test_s0,self._test_c0],feed_dict=feed_dict)
 		state = sample_input._path[0]
 		prev_state = sample_input._path[0]
 		_map = self._maps[sample_input._map_name]
