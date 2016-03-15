@@ -68,9 +68,7 @@ class NavModel(object):
 		self._learning_rate_decay_factor = config.learning_rate_decay_factor
 
 		self._max_gradient_norm	= config.max_gradient_norm
-		self._global_norm 		= 0.0
-		self._loss 					= 0.0
-
+		
 		# debug parameters
 		self._train_dir = "tmp/"			# dir where checkpoint files will be saves
 		

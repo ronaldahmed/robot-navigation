@@ -7,7 +7,7 @@ of Navigational Instructions to Action Sequences"</b> (link <a href="http://arxi
 <p>The dataset used was the raw version of the SAIL route instruction dataset collected by MacMahon, Stankiewicz, and Kuipers (2006). The dataset contains 706 non-trivial navigational instruction paragraphs, produced by six instructors for 126 unique start and end position pairs spread evenly across three virtual worlds. Chen and Mooney (2011) segmented the data into individual sentences and paired each one of them with an action sequence. Check the original dataset <a href="http://www.cs.utexas.edu/users/ml/clamp/navigation/">here</a>.
 </p>
 
-References:
+<b>References:</b><br>
 Mei, H.; Bansal, M.; and Walter, M.R.. 2016. Listen, Attend, and Walk: Neural Mapping
 of Navigational Instructions to Action Sequences. In Proceedings of the Conference on Artificial Intelligence (AAAI) 2016.
 
