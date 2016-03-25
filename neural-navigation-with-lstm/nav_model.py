@@ -8,7 +8,7 @@ from POMDP.MarkovLoc_Grid import getMapGrid
 from POMDP.MarkovLoc_Jelly import getMapJelly
 from POMDP.MarkovLoc_L import getMapL
 
-from utils import get_landmark_set, get_batch_world_context, get_sparse_world_context, move
+from utils import get_landmark_set, get_objects_set, get_batch_world_context, get_sparse_world_context, move
 from custom_nn import *
 
 ## max instructions length: 48
@@ -27,7 +27,6 @@ class Config(object):
 							embedding_world_state_size=30,
 							dropout_rate=1.0
 							):
-		self.batch_size = batch_size
 		self.vocab_size = vocab_size
 		self.num_nodes = num_nodes
 		self.learning_rate = learning_rate
@@ -44,20 +43,16 @@ class NavModel(object):
 			'l'	  : getMapL()
 		}
 
-	def __init__(self, config):
+	def __init__(self, config, is_training=True):
 		# Maps' feature dictionary
-		self._map_feature_dict = set()
-		for _map in self._maps.values():
-			self._map_feature_dict.update( get_landmark_set(_map) )
-		self._map_feature_dict = dict( zip(list(self._map_feature_dict),range(len(self._map_feature_dict))) )
-		self._featmapById = dict( zip(self._map_feature_dict.values(),self._map_feature_dict.keys()) )
+		self._map_feature_dict = get_landmark_set(self._maps['grid']) # all featureas are the same for each map
+		self._map_objects_dict = get_objects_set(self._maps['grid'])
 
-		self._batch_size 				= config.batch_size
-		self._encoder_unrollings 	= config.encoder_unrollings
-		self._decoder_unrollings 	= config.decoder_unrollings
+		self._max_encoder_unrollings 	= config.encoder_unrollings
+		self._max_decoder_unrollings 	= config.decoder_unrollings
 		self._num_actions				= config.num_actions
 		self._vocab_size 				= config.vocab_size
-		self._y_size  					= len(self._map_feature_dict) * 3
+		self._y_size  					= 4*len(self._map_feature_dict) + len(self._map_objects_dict)
 
 		# Model parameters
 		self._n_hidden 					 	= config.num_nodes 	# same for encoder and decoder
@@ -75,28 +70,27 @@ class NavModel(object):
 		# merging and writing vars
 		self._writer = None
 
-
 		# Dropout rate
 		keep_prob = config.dropout_rate
 
 		## TRAINING Placeholders
 		self._encoder_inputs = []
+		self._encoder_unrollings = tf.placeholder('int64')
+
 		self._decoder_outputs = []
+		self._decoder_unrollings = tf.placeholder('int64')
 		self._world_state_vectors = [] 	# original sample structure, containing complete path, start_pos, end_pos, and map name
-		for i in xrange(self._encoder_unrollings):
-			self._encoder_inputs.append( tf.placeholder(tf.float32,shape=[self._batch_size,self._vocab_size], name='x') )
-		for i in xrange(self._decoder_unrollings):
-			self._decoder_outputs.append( tf.placeholder(tf.int32,shape=[self._batch_size], name='actions') )
-			self._world_state_vectors.append( tf.placeholder(tf.float32,shape=[self._batch_size,self._y_size], name='world_vect') )
+		for i in xrange(self._max_encoder_unrollings):
+			self._encoder_inputs.append( tf.placeholder(tf.float32,shape=[1,self._vocab_size], name='x') )
+		for i in xrange(self._max_decoder_unrollings):
+			self._decoder_outputs.append( tf.placeholder(tf.int32,shape=[1], name='actions') )
+			self._world_state_vectors.append( tf.placeholder(tf.float32,shape=[1,self._y_size], name='world_vect') )
 
 		## TESTING / VALIDATION Placeholders
-		self._test_encoder_inputs = []
-		for i in xrange(self._encoder_unrollings):
-			self._test_encoder_inputs.append( tf.placeholder(tf.float32,shape=[1,self._vocab_size], name='test_x') )
-		self._test_decoder_output = tf.placeholder(tf.float32,shape=[1,self._num_actions], name='test_action_t')
 		self._test_st = tf.placeholder(tf.float32, [1, self._n_hidden], name='test_st')
 		self._test_ct = tf.placeholder(tf.float32, [1, self._n_hidden], name='test_ct')
 		self._test_yt = tf.placeholder(tf.float32, [1, self._y_size], name='test_yt')
+		self._test_decoder_output = tf.placeholder(tf.float32,shape=[1,self._num_actions], name='test_action')
 
 		with tf.name_scope('Weights') as scope:
 			# Alignment model weights
@@ -149,7 +143,7 @@ class NavModel(object):
 			lstm_fw_cell = tf.nn.rnn_cell.BasicLSTMCell(self._n_hidden, forget_bias=1.0, input_size=self._vocab_size)
 			lstm_bw_cell = tf.nn.rnn_cell.BasicLSTMCell(self._n_hidden, forget_bias=1.0, input_size=self._vocab_size)
 
-			def encoder(encoder_inputs, batch_size=self._batch_size, is_training=True):
+			def encoder(encoder_inputs,is_training=True):
 				fw_cell = lstm_fw_cell
 				bw_cell = lstm_bw_cell
 				if is_training and keep_prob < 1.0:
@@ -161,64 +155,84 @@ class NavModel(object):
 				h,c1,h1 = bidirectional_rnn(fw_cell,bw_cell,
 											 encoder_inputs,
 											 dtype=tf.float32,
-											 sequence_length = self._encoder_unrollings * tf.ones([batch_size],tf.int64)
+											 sequence_length = self._encoder_unrollings*tf.ones([1],tf.int64)
 											 )
 				return h,c1,h1
+		#END-ENCODER-SCOPE
 
-		def decoder_cell(i, o, z, c_prev):
-			input_gate  = tf.sigmoid(tf.matmul(i, ix) + tf.matmul(o, im) + tf.matmul(z,iz) + ib)
-			forget_gate = tf.sigmoid(tf.matmul(i, fx) + tf.matmul(o, fm) + tf.matmul(z,fz) + fb)
-			output_gate = tf.sigmoid(tf.matmul(i, ox) + tf.matmul(o, om) + tf.matmul(z,oz) + ob)
-			# gt
-			update = tf.tanh(tf.matmul(i, gx) + tf.matmul(o, gm) + tf.matmul(z,gz) + gb)
-			# ct
-			c_t = forget_gate * c_prev + input_gate * update
-			s_t = output_gate * tf.tanh(c_t)
-			return s_t, c_t
-
+		#######################################################################################################################
 		# Alignment model
 		with tf.name_scope('Aligner') as scope:
-			def context_vector(s_prev,h_encoder,ux_vh,encoder_inputs,batch_size):
+			def context_vector(s_prev,h_encoder,ux_vh,encoder_inputs):
 				# alignment model
-				beta = [tf.matmul(tf.tanh(tf.matmul(s_prev,W_a) + u_v + bias_a),v_a) + tanh_bias_a for u_v in ux_vh]
+				beta = []
+				for i in xrange(self._max_encoder_unrollings):
+					beta.append( tf.cond( tf.less(tf.constant(i,dtype=tf.int64),self._encoder_unrollings),
+												 lambda: tf.matmul(tf.tanh(tf.matmul(s_prev,W_a) + ux_vh[i] + bias_a),v_a) + tanh_bias_a,
+												 lambda: tf.zeros([1,1])
+												)
+									)
 				beta = tf.concat(1,beta, name='beta')
 				# weights of each (xj,hj)
 				alpha = tf.nn.softmax(beta)	# shape: batch_size x encoder_unroll
-				alpha = tf.split(1,self._encoder_unrollings,alpha, name='alpha')	# list of unrolling, each elmt of shape [batch_size x 1]
-				z_t = tf.Variable(tf.zeros([batch_size , 2*self._n_hidden + self._vocab_size]), name='z_t')
-				for j in xrange(self._encoder_unrollings):
-					xh = tf.concat(1,[encoder_inputs[j],h_encoder[j]], name='xhj')  # (x_j, h_j)
+				alpha = tf.split(1,self._max_encoder_unrollings,alpha, name='alpha')	# list of unrolling, each elmt of shape [batch_size x 1]
+				z_t = tf.Variable(tf.zeros([1 , 2*self._n_hidden + self._vocab_size]), name='z_t')
+
+				for j in xrange(self._max_encoder_unrollings):
+					xh = tf.cond( tf.less(tf.constant(j,dtype=tf.int64),self._encoder_unrollings),
+									  lambda: tf.concat(1,[encoder_inputs[j],h_encoder[j]], name='xhj'), # (x_j, h_j)
+									  lambda: tf.zeros([1,2*self._n_hidden + self._vocab_size])
+									)
 					z_t += alpha[j] * xh
 				return z_t
 
 			def precalc_Ux_Vh(encoder_inputs,h_enc):
 				ux_vh = []
-				for i in xrange(self._encoder_unrollings):
-					ux_vh.append( tf.matmul(encoder_inputs[i],U_a) + tf.matmul(h_enc[i],V_a) )
+				for i in xrange(self._max_encoder_unrollings):
+					ux_vh.append( tf.cond( tf.less(tf.constant(i,dtype=tf.int64),self._encoder_unrollings),
+												  lambda: tf.matmul(encoder_inputs[i],U_a) + tf.matmul(h_enc[i],V_a),
+												  lambda: tf.zeros([1,self._n_hidden])
+												)
+						 			)
 				return ux_vh
 
-		#######################################################################################################################
-
-		def model_encoder_decoder(encoder_inputs, world_state_vectors, batch_size):
-			h_encoder,c1,h1 = encoder(encoder_inputs)	
-			U_V_precalc = precalc_Ux_Vh(encoder_inputs,h_encoder)
+		#######################################################################################################################			
+		## Decoder loop
+		with tf.name_scope('Decoder') as scope:
+			# Definition of the cell computation.
+			def decoder_cell(i, o, z, c_prev):
+				input_gate  = tf.sigmoid(tf.matmul(i, ix) + tf.matmul(o, im) + tf.matmul(z,iz) + ib)
+				forget_gate = tf.sigmoid(tf.matmul(i, fx) + tf.matmul(o, fm) + tf.matmul(z,fz) + fb)
+				output_gate = tf.sigmoid(tf.matmul(i, ox) + tf.matmul(o, om) + tf.matmul(z,oz) + ob)
+				# gt
+				update = tf.tanh(tf.matmul(i, gx) + tf.matmul(o, gm) + tf.matmul(z,gz) + gb)
+				# ct
+				c_t = forget_gate * c_prev + input_gate * update
+				s_t = output_gate * tf.tanh(c_t)
+				return s_t, c_t
 			
-			## Decoder loop
-			with tf.name_scope('Decoder') as scope:
+			###################################################################################################################
+			##TRAINING
+			# Decode all sequence using word state vector from training data
+			if is_training:
+				h_encoder,c1,h1 = encoder(self._encoder_inputs)
+				U_V_precalc = precalc_Ux_Vh(self._encoder_inputs,h_encoder)
 				# Initial states
 				s_t = tf.tanh( tf.matmul(h1,w_trans_s)+b_trans_s , name='s_0')
 				c_t = tf.tanh( tf.matmul(c1,w_trans_c)+b_trans_c , name='c_0')
-				# Definition of the cell computation.
-
+			
 				logits = [] # logits per rolling
-				predictions = []
-				for i in xrange(self._decoder_unrollings):
+				self._train_predictions = []
+				for i in xrange(self._max_decoder_unrollings):
 					# world state vector at step i
-					y_t = world_state_vectors[i]	# batch_size x num_local_feats (feat_id format)
+					y_t = tf.cond( tf.less(tf.constant(i,dtype=tf.int64),self._decoder_unrollings),
+										lambda: self._world_state_vectors[i],		# batch_size x num_local_feats (feat_id format)
+										lambda: tf.zeros([1,self._y_size])
+									)
 					# embeed world vector | relu nodes
 					ey = tf.nn.relu(tf.matmul(y_t,w_emby) + b_emby, name='Ey')
 					# context vector
-					z_t = context_vector(s_t,h_encoder,U_V_precalc,encoder_inputs,batch_size)
+					z_t = context_vector(s_t,h_encoder,U_V_precalc,self._encoder_inputs)
 					# Dropout
 					ey = tf.nn.dropout(ey, keep_prob)
 					s_t,c_t = decoder_cell(ey,s_t,z_t,c_t)
@@ -227,67 +241,74 @@ class NavModel(object):
 					hq = ey + tf.matmul(s_t,ws) + tf.matmul(z_t,wz) + b_q
 					# Output layer
 					logit = tf.matmul(hq,wo) + b_o
-					prediction = tf.nn.softmax(logit,name='prediction')
+					fill_pred = tf.constant([0.,0.,0.,0.,1.])	# one-hot vector for PAD
+					prediction = tf.cond( tf.less(tf.constant(i,dtype=tf.int64),self._decoder_unrollings),
+										  lambda: tf.nn.softmax(logit,name='prediction'),
+										  lambda: fill_pred
+									)
 					logits.append(logit)
-					predictions.append(prediction)
+					self._train_predictions.append(prediction)
 				#END-FOR-DECODER-UNROLLING
-			#END-DECODER-SCOPE
-			return logits,predictions
-		#END-MODEL
-
-
-		with tf.variable_scope('Train_test_pipeline') as scope:
-			logits,self._train_predictions = model_encoder_decoder(self._encoder_inputs,
-																					 self._world_state_vectors,
-																					 batch_size=self._batch_size)
-			scope.reuse_variables()
-
-			self._loss = tf.nn.seq2seq.sequence_loss(logits,
-																 targets=self._decoder_outputs,
-																 weights=[tf.ones(shape=[self._batch_size],dtype=tf.float32) 
-																 				for _ in range(self._decoder_unrollings)],
-																 name='train_loss')
-			# Optimizer setup
-			self._global_step = tf.Variable(0,trainable=False)
-			"""
-			self._learning_rate = tf.train.exponential_decay(self._init_learning_rate,
-															 self._global_step, 
-															 5000,
-															 self._learning_rate_decay_factor,
-															 staircase=True)
-			"""
-			# debug variables
-			params = tf.trainable_variables()
-
-			#optimizer = tf.train.GradientDescentOptimizer(self._learning_rate)
-			optimizer = tf.train.AdamOptimizer(learning_rate=self._init_learning_rate,
-														  epsilon=1e-4)
-			# Gradient clipping
-			gradients, v = zip(*optimizer.compute_gradients(self._loss,params))
-			self._clipped_gradients, self._global_norm = tf.clip_by_global_norm(gradients, self._max_gradient_norm)
-			# Apply clipped gradients
-			self._optimizer = optimizer.apply_gradients( zip(self._clipped_gradients, v), global_step=self._global_step )
-
-			##############################################################################################################
-			## Testing
-			test_h,c1,h1 = encoder(self._test_encoder_inputs,1,False)
+				# Loss definition
+				reshaped_dec_outputs = []
+				for i in xrange(self._max_decoder_unrollings):
+					out = tf.cond( tf.less(tf.constant(i,dtype=tf.int64),self._decoder_unrollings),
+										lambda: self._decoder_outputs[i],
+										lambda: 4*tf.ones([1],dtype=tf.int32)
+						)
+					reshaped_dec_outputs.append(out)
+				self._loss = tf.nn.seq2seq.sequence_loss(logits,
+																	 targets=reshaped_dec_outputs,
+																	 weights=[tf.ones([1],dtype=tf.float32)]*self._max_decoder_unrollings,
+																	 #np.ones(shape=(self._max_decoder_unrollings,1),dtype=np.float32),
+																	 name='train_loss')
+			###################################################################################################################
+			# TESTING
+			# Decode one step at a time, the world state vector is defined externally			
+			tf.get_variable_scope().reuse_variables()
+			test_h,c1,h1 = encoder(self._encoder_inputs,False)
 			self._test_s0 = tf.tanh( tf.matmul(h1,w_trans_s) , name='test_s0')
 			self._test_c0 = tf.tanh( tf.matmul(c1,w_trans_c)+b_trans_c , name='test_c0')
 
-			test_ux_vh = precalc_Ux_Vh(self._test_encoder_inputs,test_h)
+			test_ux_vh = precalc_Ux_Vh(self._encoder_inputs,test_h)
 			# embeed world vector | relu nodes
 			ey = tf.nn.relu(tf.matmul(self._test_yt,w_emby) + b_emby, name='Ey_test')
 			# context vector
-			z_t = context_vector(self._test_st,test_h,test_ux_vh,self._test_encoder_inputs,1)
+			z_t = context_vector(self._test_st,test_h,test_ux_vh,self._encoder_inputs)
 			self._next_st,self._next_ct = decoder_cell(ey, self._test_st, z_t, self._test_ct)
 			# Hidden linear layer before output, proyects z_t,y_t, and s_t to an embeeding-size layer
 			hq = ey + tf.matmul(self._next_st,ws) + tf.matmul(z_t,wz) + b_q
 			logit = tf.matmul(hq,wo) + b_o
 			self._test_prediction = tf.nn.softmax(logit,name='inf_prediction')
+			# Loss definition
 			self._test_loss = tf.nn.softmax_cross_entropy_with_logits(logit,self._test_decoder_output, name="test_loss")
+		#END-DECODER-SCOPE
+
+		
+		with tf.variable_scope('Optimization') as scope:
+			# Optimizer setup
+			self._global_step = tf.Variable(0,trainable=False)
+			
+			#self._learning_rate = tf.train.exponential_decay(self._init_learning_rate,
+			#												 self._global_step, 
+			#												 5000,
+			#												 self._learning_rate_decay_factor,
+			#												 staircase=True)
+			
+			
+			#params = tf.trainable_variables()
+			#optimizer = tf.train.GradientDescentOptimizer(self._learning_rate)
+			optimizer = tf.train.AdamOptimizer(learning_rate=self._init_learning_rate,
+														  epsilon=1e-4)
+			# Gradient clipping
+			#gradients = tf.gradients(self._loss,params)
+			gradients,params = zip(*optimizer.compute_gradients(self._loss))
+			self._clipped_gradients, self._global_norm = tf.clip_by_global_norm(gradients, self._max_gradient_norm)
+			# Apply clipped gradients
+			self._optimizer = optimizer.apply_gradients( zip(self._clipped_gradients, params) )#, global_step=self._global_step )
 
 		# Summaries
-		clipped_resh = [tf.reshape(tensor,[-1]) for tensor in self._clipped_gradients]
+		clipped_resh = [tf.reshape(tensor,[-1]) for tensor in self._clipped_gradients if tensor]
 		clipped_resh = tf.concat(0,clipped_resh)
 		_ = tf.scalar_summary("loss",self._loss)
 		_ = tf.scalar_summary('global_norm',self._global_norm)
@@ -298,21 +319,20 @@ class NavModel(object):
 		#self.saver = tf.train.Saver(tf.all_variables())
 		self._merged = tf.merge_all_summaries()
 		
+		
 	#END-INIT
 	##########################################################################################
 	def get_end_pos(self, actions, start_pos_grid, map_name):
 		"""
-		actions: [action_id]*dec_unrolls
+		actions: [1 x num_actions]*dec_unrolls | prob distributions of actions
 		start_pos_grid: (xg,yg,pose)
 		"""
 		_map = self._maps[map_name]
 		state = start_pos_grid
 		prev_state = start_pos_grid
-		for action in actions:
+		for action_distro in actions:
+			action = action_distro.argmax()
 			prev_state = state
-			if state == -1:
-				ipdb.set_trace()
-
 			state = move(state,action,_map)
 			if state == -1:
 				return prev_state
@@ -329,32 +349,48 @@ class NavModel(object):
 		for b in xrange(batch_size):
 			init_pos = samples[b]._path[0]
 			end_pos  = samples[b]._path[-1]
-			actions = [roll[b,:].argmax() for roll in predictions]
+			actions = [roll[b,:] for roll in predictions]
 			try:
 				end_pred = self.get_end_pos(actions, init_pos, samples[b]._map_name)
 			except:
 				ipdb.set_trace()
-			positive_samples += end_pos[:2]==end_pred[:2]	# compare to x,y, not pose
+			#positive_samples += end_pos[:2]==end_pred[:2]	# compare to x,y, not pose
+			positive_samples += int(end_pos==end_pred)	# compare to x,y,pose
 
 		return float(positive_samples)/batch_size
 
 	##########################################################################################
 
 	def training_step(self,session,encoder_inputs,decoder_outputs,sample_inputs):
+		"""
+		Runs training step for one simple sample
+		returns:
+			loss, summary_string, correct (1:correctly predicted| 0: mispredicted)
+		"""
 		feed_dict = {}
-		
-		for i in xrange(self._encoder_unrollings):
-			feed_dict[self._encoder_inputs[i]] = encoder_inputs[i]
+		n_enc_unrolls = len(encoder_inputs)
+		n_dec_unrolls = len(decoder_outputs)
+		feed_dict[self._encoder_unrollings] = n_enc_unrolls
+		feed_dict[self._decoder_unrollings] = n_dec_unrolls
+		sample_input = sample_inputs[0]
 
-		for i in xrange(self._decoder_unrollings):
-			# action sequence
-			feed_dict[self._decoder_outputs[i]] = decoder_outputs[i]
-			# world_state vector Y
-			y_roll = get_batch_world_context(sample_inputs,i,
-														self._maps,
-														self._map_feature_dict,
-														self._batch_size)
-			feed_dict[self._world_state_vectors[i]] = y_roll
+		for i in xrange(self._max_encoder_unrollings):
+			if i < n_enc_unrolls:
+				feed_dict[self._encoder_inputs[i]] = encoder_inputs[i]
+			else:
+				feed_dict[self._encoder_inputs[i]] = np.zeros(shape=(1,self._vocab_size),dtype=np.float32)
+		_map = self._maps[sample_input._map_name]
+		for i in xrange(self._max_decoder_unrollings):
+			if i < n_dec_unrolls:
+				# world_state vector Y
+				x,y,pose = sample_input._path[i]
+				place = _map.locationByCoord[(x,y)]
+				y_roll = get_sparse_world_context(_map, place, pose, self._map_feature_dict, self._map_objects_dict)
+				feed_dict[self._decoder_outputs[i]] 	 = [decoder_outputs[i]]
+				feed_dict[self._world_state_vectors[i]] = y_roll
+			else:
+				feed_dict[self._decoder_outputs[i]] 	 = np.zeros(shape=(1),dtype=np.float32)
+				feed_dict[self._world_state_vectors[i]] = np.zeros(shape=(1,self._y_size),dtype=np.float32)
 		
 		output_feed = [
 			self._optimizer,
@@ -362,22 +398,34 @@ class NavModel(object):
 			self._merged,
 		] + self._train_predictions
 		outputs = session.run(output_feed,feed_dict=feed_dict)
+		predictions = outputs[3:]
+		correct = self.get_endpoint_accuracy(sample_inputs,predictions)
 
-		return outputs
+		ipdb.set_trace()
 
-	def inference_step(self,session,encoder_input,decoder_output,sample_input):
+		return (outputs[1],outputs[2],correct)	#loss, summary_str, correct
+
+	def inference_step(self,session,encoder_inputs,decoder_output,sample_input):
 		"""
 		Performs inference with beam search in the decoder.
 		session: tensorflow session
-		encoder_input: [1 x K]*enc_unroll
+		encoder_inputs: [1 x K]*enc_unroll
 		decoder_output: true actions [dec_unroll]
 		sample_input: Sample instance of current sample
 		return : loss, correct_pred (True|False)
 		"""
 		feed_dict = {}
+		n_enc_unrolls = len(encoder_inputs)
+		n_dec_unrolls = len(decoder_output)
+		feed_dict[self._encoder_unrollings] = n_enc_unrolls
+		feed_dict[self._decoder_unrollings] = n_dec_unrolls
+
 		end_state = sample_input._path[-1]
-		for i in xrange(self._encoder_unrollings):
-			feed_dict[self._test_encoder_inputs[i]] = encoder_input[i]
+		for i in xrange(self._max_encoder_unrollings):
+			if i < n_enc_unrolls:
+				feed_dict[self._encoder_inputs[i]] = encoder_inputs[i]
+			else:
+				feed_dict[self._encoder_inputs[i]] = np.zeros(shape=(1,self._vocab_size),dtype=np.float32)
 
 		# initial values for cell variables
 		[st,ct] = session.run([self._test_s0,self._test_c0],feed_dict=feed_dict)
@@ -385,16 +433,17 @@ class NavModel(object):
 		prev_state = sample_input._path[0]
 		_map = self._maps[sample_input._map_name]
 		
-		loss = 0.0 	# must be averaged over predicted sequence
-		n_preds = -1
-		for i in xrange(self._decoder_unrollings):
+		loss = 0.0 	# must be averaged over predicted sequence length
+		n_preds = 0
+		while(True):	# keep rolling until stop criterion
 			# one hot vector of current true action
 			onehot_act = np.zeros((1,self._num_actions),dtype=np.float32)
-			onehot_act[0,decoder_output[i]] = 1.0
+			if npreds < n_dec_unrolls:
+				onehot_act[0,decoder_output[npreds]] = 1.0
 			# get world vector for current position
 			x,y,pose = state
 			place = _map.locationByCoord[(x,y)]
-			yt = get_sparse_world_context(_map, place, pose, self._map_feature_dict)
+			yt = get_sparse_world_context(_map, place, pose, self._map_feature_dict, self._map_objects_dict)
 			# set placeholder for current roll
 			feed_dict[self._test_decoder_output] = onehot_act
 			feed_dict[self._test_st] = st
@@ -408,17 +457,17 @@ class NavModel(object):
 				self._test_loss,
 				]
 			st,ct,prediction,step_loss = session.run(output_feed,feed_dict=feed_dict)
-			loss += step_loss
+			if npreds < n_dec_unrolls:
+				loss += step_loss
+			npreds += 1
 			# greedy prediction
 			pred_act = prediction.argmax()
 			# move according to prediction
 			prev_state = state
 			state = move(state,pred_act,_map)
 			if state == -1:
-				n_preds = i+1
 				break
-		if state != -1:
-			prev_state = state
-		loss /= (n_preds if n_preds!=-1 else self._decoder_unrollings)
+			
+		loss /= min(npreds,n_dec_unrolls)
 
 		return loss,int(end_state==prev_state)	# for single-sentence

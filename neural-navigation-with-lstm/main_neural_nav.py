@@ -121,26 +121,29 @@ def train(config,batch_gens,num_steps,steps_per_checkpoint,verbose=True,force_ne
 			print ("Creating model...")
 		model = create_model(sess,config,force_new_model)	# create fresh model
 		loss,step_time = 0.0,0.0
+		train_acc = 0.0
 		if verbose:
 			print ("Training...")
 		for step in xrange(num_steps):
 			# Get a batch and make a step.
 			start_time = time.time()
-			encoder_batch,decoder_batch,sample_batch = train_batch_gen.get_batch()
+			if train_batch_gen._batch_size==1:
+				encoder_batch,decoder_batch,sample_batch = train_batch_gen.get_one_sample()
+			else:
+				encoder_batch,decoder_batch,sample_batch = train_batch_gen.get_batch()
 			# run predictions
-			outputs = model.training_step(sess,
-								 					encoder_batch,
-								 					decoder_batch,
-								 					sample_batch)
-			step_loss = outputs[1]
-			summary_str = outputs[2]
+			step_loss,summary_str,step_corr = model.training_step(sess,
+																 					encoder_batch,
+																 					decoder_batch,
+																 					sample_batch)
 			step_time += (time.time() - start_time) / steps_per_checkpoint
 			loss += step_loss / steps_per_checkpoint
+			train_acc += corr
 
 			if step % steps_per_checkpoint == 0:
 				# calculate last accuracy in training set
 				predictions = outputs[3:]
-				train_accuracy = model.get_endpoint_accuracy(sample_batch,predictions)
+				train_accuracy = float(train_acc)/(step+1.0)
 				if verbose:
 					perplexity = math.exp(loss) if loss < 100 else float('inf')
 					print ("step %d learning rate %.4f step-time %.2f" % (step, model._learning_rate.eval(),step_time) )
@@ -158,7 +161,7 @@ def train(config,batch_gens,num_steps,steps_per_checkpoint,verbose=True,force_ne
 				valid_loss = 0.0
 				valid_accuracy = 0
 				for _ in xrange(valid_size):
-					encoder_batch,decoder_batch,sample_batch = valid_gen.get_batch()
+					encoder_batch,decoder_batch,sample_batch = valid_gen.get_one_sample()
 					vloss,corr = model.inference_step(sess,
 												   			 encoder_batch,
 												   			 decoder_batch,
@@ -185,7 +188,7 @@ def train(config,batch_gens,num_steps,steps_per_checkpoint,verbose=True,force_ne
 		# calc test single data metrics
 		test_loss = 0.0
 		for _ in xrange(test_size):
-			encoder_batch,decoder_batch,sample_batch = test_gen.get_batch()
+			encoder_batch,decoder_batch,sample_batch = test_gen.get_one_sample()
 			vloss,corr = model.inference_step(sess,
 										   			 encoder_batch,
 										   			 decoder_batch,
@@ -210,12 +213,12 @@ if __name__=="__main__":
 	print("Reading data...")
 	folds_vDev = get_folds_vDev()
 	#folds_vTest = get_folds_vTest()
-	batch_size = 64
-	num_steps = 101
-	steps_per_checkpoint = 5	# How many training steps to do per checkpoint
+	batch_size = 1
+	num_steps = 10
+	steps_per_checkpoint = 2	# How many training steps to do per checkpoint
 	params = {
 		'dropout': [0.5],
-		'num_hidden': [100]
+		'num_hidden': [50]
 	}
 	best_params,accs = crossvalidate(folds_vDev[:1],params,batch_size,num_steps,steps_per_checkpoint)
 	train_acc,valid_acc,test_acc = accs

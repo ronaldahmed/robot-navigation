@@ -9,6 +9,7 @@ from collections import Counter
 from MARCO.POMDP.MarkovLoc_Grid import getMapGrid
 from MARCO.POMDP.MarkovLoc_Jelly import getMapJelly
 from MARCO.POMDP.MarkovLoc_L import getMapL
+from MARCO.Robot.Meanings import Wall,End,Empty
 
 #######################################################################################################
 data_dir = 'data/'
@@ -93,20 +94,6 @@ class MapData:
 		# add last batch
 		ms_sample_list.append(ms_sample)
 		return ms_sample_list
-
-def get_landmark_set(_map):
-	# Iterates over all locations (intersections and ends) of map, extracting landmarks from map (context festures)
-	# return dict {Meaning: id}
-	feats = set()
-	for loc in xrange(1,_map.NumPlaces):
-		for angle in xrange(_map.NumPoses):
-			views = _map.getView((loc,angle))
-			views = views[0][0]
-			[feats.add(feat) for view in views for feat in view]	# feat is an instance of Meaning
-	n_feats = len(feats)
-	feat_set = dict( zip(list(feats),xrange(n_feats)) )
-	return feat_set
-
 
 def verbose_actions(actions):
 	#print string command for each action
@@ -413,6 +400,20 @@ class BatchGenerator:
 		decoder_batch = np.array(decoder_batch)
 		return encoder_batch,decoder_batch,sample_batch
 
+	def get_one_sample(self):
+		# SGD instead of mini-batch, one sample at a time
+		encoder_input = []
+		encoder_seq = self._data[ self._cursor[0] ]._instructions
+		decoder_seq = self._data[ self._cursor[0] ]._actions
+		for i in xrange(len(encoder_seq)):
+			roll = np.zeros(shape=(1,self._vocabulary_size),dtype=np.float)
+			roll[0,encoder_seq[i]] = 1.0
+			encoder_input.append(roll)
+		sample = self._data[ self._cursor[0] ]
+		self._cursor[0] = (self._cursor[0] + 1) % self._data_size
+		return encoder_input,decoder_seq,[sample]
+
+
 	def batch2string(self,encoder_batch,decoder_batch):
 		for b in xrange(self._batch_size):
 			print("Batch:",b)
@@ -428,34 +429,77 @@ class BatchGenerator:
 
 
 ##########################################################################################
+def get_landmark_set(_map):
+	# Iterates over all locations (intersections and ends) of map, extracting landmarks from map (context festures)
+	# return dict {Meaning: id}
+	feats = set()
+	for loc in xrange(1,_map.NumPlaces):
+		for angle in xrange(_map.NumPoses):
+			views = _map.getView((loc,angle))
+			views = views[0][0]
+			[feats.add(feat) for view in views for feat in view if feat!=End and feat!=Empty]	#End and Empty noy in dictionary
+	n_feats = len(feats)
+	feat_dict = dict( zip(list(feats),xrange(n_feats)) )
+
+	return feat_dict
+
+def get_objects_set(_map):
+	mid_objects = set()
+	for loc in xrange(1,_map.NumPlaces):
+		for angle in xrange(_map.NumPoses):
+			views = _map.getView((loc,angle))
+			views = views[0][0]
+			if views[0][1]!=Empty:
+				mid_objects.add(views[0][1]) #mid non-empty
+	n_feats = len(mid_objects)
+	feat_dict = dict( zip(list(mid_objects),xrange(n_feats)) )
+	return feat_dict
+
 
 def get_world_context_id(_map,place,pose):
-	# get bao-of-words repr of wold context from (place,pose)
-	# return: [forward],[left],[right] | all Meaning objects
-	views = _map.getView((place,pose))
-	views = views[0][0] # format: [(views,prob)]
-	fw = set()
-	lf = [views[0][0]]	# only left info from first view
-	rg = [views[0][2]]	# only left info from first view
-	for view in views:
-		fw.add(view[1])	# add mid info to forward
-		fw.add(view[3])
-		fw.add(view[4])
-		fw.add(view[5])
-	fw = list(fw)
-	return fw,lf,rg
+	"""
+	get bag-of-words repr of wold context from (place,pose)
+	return:
+	 featsByPose: [set(Meanings inst. in that direction)] x numPoses -> [fw,rg,bw,lf]
+	 cell_object: Object in current cell (can be Empty)
+	"""
+	featsByPose = []
+	cell_object = Empty
+	for i in range(_map.NumPoses):
+		curr_pose = (pose+i)%_map.NumPoses
+		views = _map.getView((place,curr_pose))[0][0] # format: [(views,prob)]
+		cell_object = views[0][1]	# no problem with overwriting it, bc it's the same in all directions
+		curr_view = set()
+		for j,view in enumerate(views):
+			if j>0:
+				curr_view.add(view[1])	#only add object if cell is not current
+			curr_view.add(view[3])
+			curr_view.add(view[4])
+			curr_view.add(view[5])
+		if Empty in curr_view:
+			curr_view.remove(Empty)
+		if End in curr_view:			# if End is found, replace with wall
+			curr_view.remove(End)
+			curr_view.add(Wall)
+		featsByPose.append(curr_view)
+	return featsByPose,cell_object
 
-def get_sparse_world_context(_map,place,pose,feature_dict):
+
+def get_sparse_world_context(_map,place,pose,feature_dict,object_dict):
 	num_feats = len(feature_dict)
-	y_t = np.zeros(shape=(1,3*num_feats),dtype=np.float32)
-	fw,lf,rg = get_world_context_id(_map,place,pose)
-	fw = [feature_dict[feat] 				for feat in fw]
-	lf = [feature_dict[feat] + num_feats 	for feat in lf]
-	rg = [feature_dict[feat] + 2*num_feats  for feat in rg]
-	y_t[0,fw+lf+rg] = 1.0
+	num_objects = len(object_dict)
+	y_t = np.zeros(shape=(1,num_objects + 4*num_feats),dtype=np.float32)
+	featsByPose,cell_object = get_world_context_id(_map,place,pose)
+	# add features for every direction
+	for i,features in enumerate(featsByPose):
+		ids = [feature_dict[feat] + i*num_feats for feat in features]
+		y_t[0,ids] = 1.0
+	# add object in current cell, if any
+	if cell_object != Empty:
+		y_t[0,4*num_feats+object_dict[cell_object]] = 1.0
 	return y_t
 
-def get_batch_world_context(sample_batch_roll,_t,_maps,feature_dict,batch_size):
+def get_batch_world_context(sample_batch_roll,_t,_maps,feature_dict,object_dict,batch_size):
 	"""
 	args:
 	sample_batch_roll: placeholder of shape [batch_size,1] with Sample obj data for ONE roll
@@ -467,14 +511,15 @@ def get_batch_world_context(sample_batch_roll,_t,_maps,feature_dict,batch_size):
 	return : world_state vector y [batch_size x 3 * num_feats]
 	"""
 	num_feats = len(feature_dict)
-	roll_y = np.zeros(shape=(batch_size,num_feats*3),dtype=np.float32)
+	num_objects = len(object_dict)
+	roll_y = np.zeros(shape=(batch_size,4*num_feats + num_objects),dtype=np.float32)
 	for b in xrange(batch_size):
 		map_name = sample_batch_roll[b]._map_name
 		if _t < len(sample_batch_roll[b]._path):
 			# check world state for valid step
 			x,y,pose = sample_batch_roll[b]._path[_t]
 			place = _maps[map_name].locationByCoord[(x,y)]
-			roll_y[b,:] = get_sparse_world_context(_maps[map_name],place,pose,feature_dict)
+			roll_y[b,:] = get_sparse_world_context(_maps[map_name],place,pose,feature_dict,object_dict)
 	return roll_y
 
 
@@ -543,6 +588,13 @@ ipdb.set_trace()
 
 #ipdb.set_trace()
 
-#mm = getMapGrid()
+"""
+mg = getMapGrid()
+mj = getMapJelly()
+ml = getMapL()
 #state = move((1,2),FW,mm)
-#ipdb.set_trace()
+ff = get_landmark_set(mj)
+od = get_objects_set(mj)
+y = get_sparse_world_context(mj,15,0,ff,od)
+ipdb.set_trace()
+"""
