@@ -157,7 +157,7 @@ class Baseline(NavModel):
 			
 			self._learning_rate = tf.train.exponential_decay(self._init_learning_rate,
 															 self._global_step, 
-															 200,
+															 10000,
 															 self._learning_rate_decay_factor,
 															 staircase=True)
 			
