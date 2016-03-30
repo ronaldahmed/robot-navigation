@@ -8,7 +8,7 @@ from POMDP.MarkovLoc_Grid import getMapGrid
 from POMDP.MarkovLoc_Jelly import getMapJelly
 from POMDP.MarkovLoc_L import getMapL
 
-from utils import get_landmark_set, get_objects_set, get_batch_world_context, get_sparse_world_context, move
+from utils import get_landmark_set, get_objects_set, get_batch_world_context, get_sparse_world_context, move, actions_str
 from custom_nn import *
 
 ## max instructions length: 48
@@ -22,7 +22,7 @@ class Config(object):
 	def __init__(self,batch_size,
 							vocab_size,
 							num_nodes=100,
-							learning_rate=0.01,
+							learning_rate=10.0,
 							learning_rate_decay_factor=0.1,
 							embedding_world_state_size=30,
 							dropout_rate=1.0
@@ -395,15 +395,27 @@ class NavModel(object):
 		output_feed = [
 			self._optimizer,
 			self._loss,
+			self._learning_rate,
 			self._merged,
 		] + self._train_predictions
 		outputs = session.run(output_feed,feed_dict=feed_dict)
-		predictions = outputs[3:]
+		predictions = outputs[4:]
+
 		correct = self.get_endpoint_accuracy(sample_inputs,predictions)
+		"""
+		temp =[]
+		for act in sample_input._actions:
+			tt = np.zeros((1,self._num_actions))
+			tt[0,act] = 1.0
+			temp.append(tt)
+		correct = self.get_endpoint_accuracy(sample_inputs,temp)
 
-		ipdb.set_trace()
+		if correct==0.0:
+			ipdb.set_trace()
+			correct = self.get_endpoint_accuracy(sample_inputs,temp)
+		"""
+		return (outputs[1],outputs[3],correct)	#loss, summary_str, correct
 
-		return (outputs[1],outputs[2],correct)	#loss, summary_str, correct
 
 	def inference_step(self,session,encoder_inputs,decoder_output,sample_input):
 		"""
@@ -434,7 +446,11 @@ class NavModel(object):
 		_map = self._maps[sample_input._map_name]
 		
 		loss = 0.0 	# must be averaged over predicted sequence length
-		n_preds = 0
+		npreds = 0
+		predicted_acts = []
+
+		#ipdb.set_trace()
+
 		while(True):	# keep rolling until stop criterion
 			# one hot vector of current true action
 			onehot_act = np.zeros((1,self._num_actions),dtype=np.float32)
@@ -462,12 +478,23 @@ class NavModel(object):
 			npreds += 1
 			# greedy prediction
 			pred_act = prediction.argmax()
+			predicted_acts.append(pred_act)
 			# move according to prediction
 			prev_state = state
 			state = move(state,pred_act,_map)
-			if state == -1:
+			if state==-1 or npreds>=self._max_decoder_unrollings:
 				break
 			
 		loss /= min(npreds,n_dec_unrolls)
+		"""
+		if self.kk>1890:
+			## DEBUG
+			print("True seq: %s" % (','.join([actions_str[act] for act in decoder_output])))
+			print("Pred seq: %s" % (','.join([actions_str[act] for act in predicted_acts])))
+
+			ipdb.set_trace()
+		self.kk+=1
+		"""
+		
 
 		return loss,int(end_state==prev_state)	# for single-sentence

@@ -2757,7 +2757,7 @@ you should be standing next to a stool
 walk forward
 FORWARD(19,15,180);(19, 16, 180)
 turn around when you hit the wall
-RIGHT(19,16,180);(19, 16, 0)
+RIGHT(19,16,180);RIGHT(19,16,270);(19, 16, 0)
 to your left and right should be brick and in front of you the stool where you just came from
 (19, 16, 0)
 

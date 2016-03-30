@@ -6,6 +6,7 @@ import numpy as np
 import tensorflow as tf
 from utils import *
 from nav_model import *
+from test_baseline import Baseline
 import time
 import math
 import ipdb
@@ -18,7 +19,8 @@ def create_model(session,config_object,force_new=False):
 	config_object: Config() instance with model parameters
 	force_new: True: creates model with fresh parameters, False: load parameters from checkpoint file
 	"""
-	model = NavModel(config_object)
+	#model = NavModel(config_object)
+	model = Baseline(config_object)
 	ckpt = tf.train.get_checkpoint_state(model._train_dir)
 	if ckpt and tf.gfile.Exists(ckpt.model_checkpoint_path) and not force_new:
 		print("Reading model parameters from %s" % ckpt.model_checkpoint_path)
@@ -138,15 +140,15 @@ def train(config,batch_gens,num_steps,steps_per_checkpoint,verbose=True,force_ne
 																 					sample_batch)
 			step_time += (time.time() - start_time) / steps_per_checkpoint
 			loss += step_loss / steps_per_checkpoint
-			train_acc += corr
+			train_acc += step_corr
 
 			if step % steps_per_checkpoint == 0:
 				# calculate last accuracy in training set
-				predictions = outputs[3:]
 				train_accuracy = float(train_acc)/(step+1.0)
 				if verbose:
 					perplexity = math.exp(loss) if loss < 100 else float('inf')
-					print ("step %d learning rate %.4f step-time %.2f" % (step, model._learning_rate.eval(),step_time) )
+					print ("step %d | learning rate %.4f | step-time %.2f" % (step,model._learning_rate.eval(),step_time) )
+					#print ("step %d step-time %.2f" % (step,step_time) )
 					print ("   Training set  : loss: %.2f, perplexity: %.2f, accuracy: %.2f" % (loss, perplexity, 100.0*train_accuracy) )
 				# Save checkpoint
 				#checkpoint_path = os.path.join(model._train_dir, "neural_walker.ckpt")
@@ -206,20 +208,19 @@ def train(config,batch_gens,num_steps,steps_per_checkpoint,verbose=True,force_ne
 	
 
 
-
-
 if __name__=="__main__":
 	# Get folds for experiments
 	print("Reading data...")
 	folds_vDev = get_folds_vDev()
 	#folds_vTest = get_folds_vTest()
 	batch_size = 1
-	num_steps = 10
-	steps_per_checkpoint = 2	# How many training steps to do per checkpoint
+	num_steps = 1001
+	steps_per_checkpoint = 100	# How many training steps to do per checkpoint
 	params = {
-		'dropout': [0.5],
-		'num_hidden': [50]
+		'dropout': [0.9],
+		'num_hidden': [500]
 	}
+
 	best_params,accs = crossvalidate(folds_vDev[:1],params,batch_size,num_steps,steps_per_checkpoint)
 	train_acc,valid_acc,test_acc = accs
 

@@ -4,6 +4,10 @@ Custom RNN and bidirectional_RNN functions, modified for working with attention 
 
 from tensorflow.python.ops.rnn import _reverse_seq, _rnn_step
 import tensorflow as tf
+import numpy as np
+
+SEED = 42
+np.random.seed(SEED)
 
 
 # modified to retrieve c1,h1 to feed the decoder initial states
@@ -180,3 +184,86 @@ def bidirectional_rnn(cell_fw, cell_bw, inputs,
   # get last memory state of bw cell
   c1,h1 = tf.split(1,2,c1h1)	# turns out that final_state is [c,h]
   return outputs,c1,h1
+
+
+
+
+
+class CustomLSTMCell(tf.nn.rnn_cell.BasicLSTMCell):
+  def __init__(self, num_units, forget_bias=1.0, input_size=None):
+    tf.nn.rnn_cell.BasicLSTMCell.__init__(self,num_units,forget_bias,input_size)
+
+  def __call__(self, inputs, state, scope=None):
+    """Long short-term memory cell (LSTM)."""
+    with tf.variable_scope(scope or type(self).__name__):  # "CustomLSTMCell"
+      # Parameters of gates are concatenated into one multiply for efficiency.
+      c, h = tf.split(1, 2, state)
+      concat = linear([inputs, h], 4 * self._num_units, True)
+
+      # i = input_gate, j = new_input, f = forget_gate, o = output_gate
+      i, j, f, o = tf.split(1, 4, concat)
+
+      new_c = c * tf.sigmoid(f + self._forget_bias) + tf.sigmoid(i) * tf.tanh(j)
+      new_h = tf.tanh(new_c) * tf.sigmoid(o)
+
+    return new_h, tf.concat(1, [new_c, new_h])
+
+
+
+def linear(args, output_size, bias, bias_start=0.0, scope=None):
+  """Linear map: sum_i(args[i] * W[i]), where W[i] is a variable.
+
+  Args:
+    args: a 2D Tensor or a list of 2D, batch x n, Tensors.
+    output_size: int, second dimension of W[i].
+    bias: boolean, whether to add a bias term or not.
+    bias_start: starting value to initialize the bias; 0 by default.
+    scope: VariableScope for the created subgraph; defaults to "Linear".
+
+  Returns:
+    A 2D Tensor with shape [batch x output_size] equal to
+    sum_i(args[i] * W[i]), where W[i]s are newly created matrices.
+
+  Raises:
+    ValueError: if some of the arguments has unspecified or wrong shape.
+  """
+  assert args
+  if not isinstance(args, (list, tuple)):
+    args = [args]
+
+  # Calculate the total size of arguments on dimension 1.
+  total_arg_size = 0
+  shapes = [a.get_shape().as_list() for a in args]
+  for shape in shapes:
+    if len(shape) != 2:
+      raise ValueError("Linear is expecting 2D arguments: %s" % str(shapes))
+    if not shape[1]:
+      raise ValueError("Linear expects shape[1] of arguments: %s" % str(shapes))
+    else:
+      total_arg_size += shape[1]
+
+  def weight_initializer(shape,dtype):
+    u,_,v = np.linalg.svd(np.random.random(size=shape),full_matrices=False )
+    weight_init = []
+    if u.shape==(total_arg_size,output_size):
+      weight_init = u
+    else:
+      weight_init = v
+    dtype_np = np.float32 if dtype==tf.float32 else np.float64
+    return tf.constant(np.array(weight_init,dtype=dtype_np))
+
+  # Now the computation.
+  with tf.variable_scope(scope or "Linear"):
+    matrix = tf.get_variable("Matrix",
+                              shape = (total_arg_size,output_size),
+                              initializer = weight_initializer)
+    if len(args) == 1:
+      res = tf.matmul(args[0], matrix)
+    else:
+      res = tf.matmul(tf.concat(1, args), matrix)
+    if not bias:
+      return res
+    bias_term = tf.get_variable(
+        "Bias", [output_size],
+        initializer=tf.constant_initializer(bias_start))
+  return res + bias_term

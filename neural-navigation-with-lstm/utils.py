@@ -556,6 +556,31 @@ def move(state,action,_map):
 
 
 ##########################################################################################
+def test_dataset(dataByMap):
+	for name,mapdata in dataByMap.items():
+		for data in mapdata.samples:
+			init_pos = data._path[0]
+			end_pos  = data._path[-1]
+			# get end pos from actions and init pos
+			state = prev_state = init_pos
+			end_followed = []
+			followed_path = []
+			for action in data._actions:
+				prev_state = state
+				state = move(state,action,mapdata.map)
+				if state == -1:
+					end_followed = prev_state
+					break
+				followed_path.append(prev_state)
+			if end_followed==[]:
+				end_followed = state
+			followed_path.append(end_followed)
+
+			if end_followed != end_pos or data._path!=followed_path:
+				print("ID: ",data._id)
+				print("True seq: %s" % (','.join([actions_str[act] for act in data._actions])))
+				ipdb.set_trace()
+
 
 ##########################################################################################
 
@@ -598,3 +623,6 @@ od = get_objects_set(mj)
 y = get_sparse_world_context(mj,15,0,ff,od)
 ipdb.set_trace()
 """
+
+#map_data = get_data()
+#test_dataset(map_data)
