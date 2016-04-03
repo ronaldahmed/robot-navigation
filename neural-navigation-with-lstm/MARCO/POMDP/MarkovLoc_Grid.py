@@ -51,8 +51,10 @@ def getMapGrid():
     8 : (15,1), 16 : (15,3),
     }
   mapGrid.locationByCoord = dict( zip(mapGrid.locations.values(),mapGrid.locations.keys()) )
-  mapGrid.plat_row_offset = 0
-  mapGrid.plat_col_offset = 0
+  #mapGrid.plat_row_offset = 0
+  #mapGrid.plat_col_offset = 0
+  mapGrid.plat_row_offset = 4
+  mapGrid.plat_col_offset = -1
   mapGrid.plat_directions = {'N':0, 'E':90, 'S':180, 'W':270}
   mapGrid.plat_orientations = {0:0, 90:1, 180:2, 270:3}
 

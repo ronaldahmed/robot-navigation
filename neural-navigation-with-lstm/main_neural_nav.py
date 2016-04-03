@@ -211,8 +211,8 @@ def train(config,batch_gens,num_steps,steps_per_checkpoint,verbose=True,force_ne
 if __name__=="__main__":
 	# Get folds for experiments
 	print("Reading data...")
-	folds_vDev = get_folds_vDev()
-	#folds_vTest = get_folds_vTest()
+	folds_vDev = get_folds_vDev(force=True)
+	folds_vTest = get_folds_vTest(force=True)
 	batch_size = 1
 	num_steps = 60001
 	steps_per_checkpoint = 2000	# How many training steps to do per checkpoint

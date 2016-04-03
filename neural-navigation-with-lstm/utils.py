@@ -107,7 +107,6 @@ def get_actions_and_path(path_text,_map):
 	n_act = len(list_pre_act)
 	actions = []
 	path = []
-	angle_id_dict = _map.plat_orientations
 	for i in xrange(n_act):
 		x,y,th = -1,-1,-1
 		id_act = -1
@@ -119,8 +118,9 @@ def get_actions_and_path(path_text,_map):
 			prx = list_pre_act[i].find('(')
 			id_act = actions_str.index(list_pre_act[i][:prx])
 			x,y,th = [int(comp.strip()) for comp in list_pre_act[i][prx+1:-1].split(',')]
-		th_id = angle_id_dict[th]
-		xg,yg = _map.gridPos_from_pathPos(x,y)
+		pose = _map.platdir2orient(th)
+
+		xg,yg = _map.locations[ _map.plat2place(x,y) ]
 
 		if xg < 1 or yg < 1:
 			print("Map: ",_map.name)
@@ -129,7 +129,7 @@ def get_actions_and_path(path_text,_map):
 			print("="*30)
 			ipdb.set_trace()
 
-		path.append( (xg,yg,th_id) )
+		path.append( (xg,yg,pose) )
 		actions.append(id_act)
 	return actions,path
 
@@ -223,6 +223,7 @@ def get_folds_vDev(dir='data/',  val=0.1, force=False):
 			# reset arrays
 			train_set = []
 			valid_set = []
+			complete_set = []	# for universal vocab
 			#
 			test_single_set = dataByMap[map_names[i]].samples
 			test_multi_set  = dataByMap[map_names[i]].get_multi_sentence_samples()
@@ -237,8 +238,10 @@ def get_folds_vDev(dir='data/',  val=0.1, force=False):
 																	random_state = SEED)
 					train_set.extend(train_samples)
 					valid_set.extend(valid_samples)
+					complete_set.extend(data)
 			# Reformat to word index
-			vocabulary = getVocabulary(train_set)
+			#vocabulary = getVocabulary(train_set)
+			vocabulary = getVocabulary(complete_set) # universal vocabulary
 			train_set 			= reformat_wordid(train_set		,vocabulary)
 			valid_set 			= reformat_wordid(valid_set		,vocabulary)
 			test_single_set 	= reformat_wordid(test_single_set,vocabulary)
@@ -330,7 +333,7 @@ def getVocabulary(data):
 	vocab = Counter()
 	for sample in data:
 		vocab.update(sample._instructions)
-	frequency_threshold = 1 	# > THR
+	frequency_threshold = 0 	# > THR
 	vocab = [w for w,f in vocab.items() if f>frequency_threshold]
 	vocab.append(EOS)
 	vocab.append(PAD)
@@ -617,6 +620,8 @@ ipdb.set_trace()
 mg = getMapGrid()
 mj = getMapJelly()
 ml = getMapL()
+ipdb.set_trace()
+
 #state = move((1,2),FW,mm)
 ff = get_landmark_set(mj)
 od = get_objects_set(mj)
