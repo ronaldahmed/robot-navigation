@@ -22,7 +22,7 @@ class Config(object):
 	def __init__(self,batch_size,
 							vocab_size,
 							num_nodes=100,
-							learning_rate=10,
+							learning_rate=10.0,
 							learning_rate_decay_factor=0.1,
 							embedding_world_state_size=30,
 							dropout_rate=1.0
