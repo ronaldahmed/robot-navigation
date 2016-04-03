@@ -214,7 +214,7 @@ if __name__=="__main__":
 	folds_vDev = get_folds_vDev(force=True)
 	folds_vTest = get_folds_vTest(force=True)
 	batch_size = 1
-	num_steps = 60001
+	num_steps = 100001
 	steps_per_checkpoint = 2000	# How many training steps to do per checkpoint
 	params = {
 		'dropout': [0.9],
