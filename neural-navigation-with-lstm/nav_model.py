@@ -101,27 +101,6 @@ class NavModel(object):
 			tanh_bias_a = tf.Variable(tf.truncated_normal([1,1], -0.1, 0.1), name='tanh_bias_a')
 			bias_a = tf.Variable(tf.zeros([1, self._n_hidden]), name='linear_bias_a')
 
-			## Decoder variables
-			# Input gate: input, previous output, context vector, and bias.
-			ix = tf.Variable(tf.truncated_normal([self._embedding_world_state_size	 , self._n_hidden], -0.1, 0.1), name='ix')
-			im = tf.Variable(tf.truncated_normal([self._n_hidden						 	 , self._n_hidden], -0.1, 0.1), name='ih')
-			iz = tf.Variable(tf.truncated_normal([2*self._n_hidden + self._vocab_size, self._n_hidden], -0.1, 0.1), name='iz')
-			ib = tf.Variable(tf.zeros([1, self._n_hidden]), name='ib')
-			# Forget gate: input, previous output, context vector, and bias.
-			fx = tf.Variable(tf.truncated_normal([self._embedding_world_state_size	 , self._n_hidden], -0.1, 0.1), name='fx')
-			fm = tf.Variable(tf.truncated_normal([self._n_hidden							 , self._n_hidden], -0.1, 0.1), name='fh')
-			fz = tf.Variable(tf.truncated_normal([2*self._n_hidden + self._vocab_size, self._n_hidden], -0.1, 0.1), name='fz')
-			fb = tf.Variable(tf.zeros([1, self._n_hidden]), name='fb')
-			# Memory cell: input, state, context vector, and bias.                             
-			gx = tf.Variable(tf.truncated_normal([self._embedding_world_state_size	 , self._n_hidden], -0.1, 0.1), name='cx')
-			gm = tf.Variable(tf.truncated_normal([self._n_hidden							 , self._n_hidden], -0.1, 0.1), name='cc')
-			gz = tf.Variable(tf.truncated_normal([2*self._n_hidden + self._vocab_size, self._n_hidden], -0.1, 0.1), name='cz')
-			gb = tf.Variable(tf.zeros([1, self._n_hidden]), name='cb')
-			# Output gate: input, previous output, context vector, and bias.
-			ox = tf.Variable(tf.truncated_normal([self._embedding_world_state_size	 , self._n_hidden], -0.1, 0.1), name='ox')
-			om = tf.Variable(tf.truncated_normal([self._n_hidden							 , self._n_hidden], -0.1, 0.1), name='oh')
-			oz = tf.Variable(tf.truncated_normal([2*self._n_hidden + self._vocab_size, self._n_hidden], -0.1, 0.1), name='oz')
-			ob = tf.Variable(tf.zeros([1, self._n_hidden]), name='ob')
 			# Embedding weight
 			w_emby = tf.Variable(tf.truncated_normal([self._y_size,self._embedding_world_state_size], -0.1, 0.1), name='Ey_w')
 			b_emby = tf.Variable(tf.zeros([1, self._embedding_world_state_size]), name='Ey_b')
@@ -139,25 +118,21 @@ class NavModel(object):
 
 		#######################################################################################################################
 		## Encoder
-		with tf.name_scope('Encoder') as scope:
-			lstm_fw_cell = tf.nn.rnn_cell.BasicLSTMCell(self._n_hidden, forget_bias=1.0, input_size=self._vocab_size)
-			lstm_bw_cell = tf.nn.rnn_cell.BasicLSTMCell(self._n_hidden, forget_bias=1.0, input_size=self._vocab_size)
+		with tf.variable_scope('Encoder') as scope:
+			fw_cell = CustomLSTMCell(self._n_hidden, forget_bias=1.0, input_size=self._vocab_size)
+			bw_cell = CustomLSTMCell(self._n_hidden, forget_bias=1.0, input_size=self._vocab_size)
 
-			def encoder(encoder_inputs,is_training=True):
-				fw_cell = lstm_fw_cell
-				bw_cell = lstm_bw_cell
-				if is_training and keep_prob < 1.0:
-					fw_cell = tf.nn.rnn_cell.DropoutWrapper(
-											fw_cell, output_keep_prob=keep_prob)
-					bw_cell = tf.nn.rnn_cell.DropoutWrapper(
-											bw_cell, output_keep_prob=keep_prob)
+			fw_cell_dp = tf.nn.rnn_cell.DropoutWrapper(
+									fw_cell, output_keep_prob=keep_prob)
+			bw_cell_dp = tf.nn.rnn_cell.DropoutWrapper(
+									bw_cell, output_keep_prob=keep_prob)
 
-				h,c1,h1 = bidirectional_rnn(fw_cell,bw_cell,
-											 encoder_inputs,
-											 dtype=tf.float32,
-											 sequence_length = self._encoder_unrollings*tf.ones([1],tf.int64)
-											 )
-				return h,c1,h1
+			h_encoder,c1,h1 = bidirectional_rnn(fw_cell_dp,bw_cell_dp,
+										 self._encoder_inputs,
+										 dtype=tf.float32,
+										 sequence_length = self._encoder_unrollings*tf.ones([1],tf.int64),
+										 scope='Encoder'
+										 )
 		#END-ENCODER-SCOPE
 
 		#######################################################################################################################
@@ -196,86 +171,88 @@ class NavModel(object):
 						 			)
 				return ux_vh
 
+			U_V_precalc = precalc_Ux_Vh(self._encoder_inputs,h_encoder)
+
 		#######################################################################################################################			
 		## Decoder loop
 		with tf.name_scope('Decoder') as scope:
-			# Definition of the cell computation.
-			def decoder_cell(i, o, z, c_prev):
-				input_gate  = tf.sigmoid(tf.matmul(i, ix) + tf.matmul(o, im) + tf.matmul(z,iz) + ib)
-				forget_gate = tf.sigmoid(tf.matmul(i, fx) + tf.matmul(o, fm) + tf.matmul(z,fz) + fb)
-				output_gate = tf.sigmoid(tf.matmul(i, ox) + tf.matmul(o, om) + tf.matmul(z,oz) + ob)
-				# gt
-				update = tf.tanh(tf.matmul(i, gx) + tf.matmul(o, gm) + tf.matmul(z,gz) + gb)
-				# ct
-				c_t = forget_gate * c_prev + input_gate * update
-				s_t = output_gate * tf.tanh(c_t)
-				return s_t, c_t
-			
-			###################################################################################################################
-			##TRAINING
-			# Decode all sequence using word state vector from training data
-			if is_training:
-				h_encoder,c1,h1 = encoder(self._encoder_inputs)
-				U_V_precalc = precalc_Ux_Vh(self._encoder_inputs,h_encoder)
-				# Initial states
-				s_t = tf.tanh( tf.matmul(h1,w_trans_s)+b_trans_s , name='s_0')
-				c_t = tf.tanh( tf.matmul(c1,w_trans_c)+b_trans_c , name='c_0')
-			
-				logits = [] # logits per rolling
-				self._train_predictions = []
-				for i in xrange(self._max_decoder_unrollings):
-					# world state vector at step i
-					y_t = tf.cond( tf.less(tf.constant(i,dtype=tf.int64),self._decoder_unrollings),
-										lambda: self._world_state_vectors[i],		# batch_size x num_local_feats (feat_id format)
-										lambda: tf.zeros([1,self._y_size])
-									)
-					# embeed world vector | relu nodes
-					ey = tf.nn.relu(tf.matmul(y_t,w_emby) + b_emby, name='Ey')
-					# context vector
-					z_t = context_vector(s_t,h_encoder,U_V_precalc,self._encoder_inputs)
-					# Dropout
-					ey = tf.nn.dropout(ey, keep_prob)
-					s_t,c_t = decoder_cell(ey,s_t,z_t,c_t)
-					s_t = tf.nn.dropout(s_t, keep_prob)
-					# Hidden linear layer before output, proyects z_t,y_t, and s_t to an embeeding-size layer
-					hq = ey + tf.matmul(s_t,ws) + tf.matmul(z_t,wz) + b_q
-					# Output layer
-					logit = tf.matmul(hq,wo) + b_o
-					fill_pred = tf.constant([0.,0.,0.,0.,1.])	# one-hot vector for PAD
-					prediction = tf.cond( tf.less(tf.constant(i,dtype=tf.int64),self._decoder_unrollings),
-										  lambda: tf.nn.softmax(logit,name='prediction'),
-										  lambda: fill_pred
-									)
-					logits.append(logit)
-					self._train_predictions.append(prediction)
-				#END-FOR-DECODER-UNROLLING
-				# Loss definition
-				reshaped_dec_outputs = []
-				for i in xrange(self._max_decoder_unrollings):
-					out = tf.cond( tf.less(tf.constant(i,dtype=tf.int64),self._decoder_unrollings),
-										lambda: self._decoder_outputs[i],
-										lambda: 4*tf.ones([1],dtype=tf.int32)
-						)
-					reshaped_dec_outputs.append(out)
-				self._loss = tf.nn.seq2seq.sequence_loss(logits,
-																	 targets=reshaped_dec_outputs,
-																	 weights=[tf.ones([1],dtype=tf.float32)]*self._max_decoder_unrollings,
-																	 #np.ones(shape=(self._max_decoder_unrollings,1),dtype=np.float32),
-																	 name='train_loss')
-			###################################################################################################################
-			# TESTING
-			# Decode one step at a time, the world state vector is defined externally			
-			tf.get_variable_scope().reuse_variables()
-			test_h,c1,h1 = encoder(self._encoder_inputs,False)
-			self._test_s0 = tf.tanh( tf.matmul(h1,w_trans_s) , name='test_s0')
-			self._test_c0 = tf.tanh( tf.matmul(c1,w_trans_c)+b_trans_c , name='test_c0')
+			dec_cell = CustomLSTMCell(self._n_hidden, forget_bias=1.0, input_size=self._vocab_size)
+			dec_cell_dp = tf.nn.rnn_cell.DropoutWrapper(
+									dec_cell, output_keep_prob=keep_prob)
+			# Initial states
+			s_t = tf.tanh( tf.matmul(h1,w_trans_s)+b_trans_s , name='s_0')
+			c_t = tf.tanh( tf.matmul(c1,w_trans_c)+b_trans_c , name='c_0')
+			state = tf.concat(1,[c_t,s_t])
 
-			test_ux_vh = precalc_Ux_Vh(self._encoder_inputs,test_h)
+			logits = [] # logits per rolling
+			self._train_predictions = []
+			for i in xrange(self._max_decoder_unrollings):
+				if i > 0: tf.get_variable_scope().reuse_variables()
+				# world state vector at step i
+				y_t = tf.cond( tf.less(tf.constant(i,dtype=tf.int64),self._decoder_unrollings),
+									lambda: self._world_state_vectors[i],		# batch_size x num_local_feats (feat_id format)
+									lambda: tf.zeros([1,self._y_size])
+								)
+				# embeed world vector | relu nodes
+				ey = tf.nn.relu(tf.matmul(y_t,w_emby) + b_emby, name='Ey')
+				# context vector
+				z_t = context_vector(s_t,h_encoder,U_V_precalc,self._encoder_inputs)
+				
+				dec_input = tf.concat(1,[ey,z_t])
+				s_t,state = dec_cell_dp(dec_input,state,scope="CustomLSTMCell")
+
+				# Hidden linear layer before output, proyects z_t,y_t, and s_t to an embeeding-size layer
+				hq = ey + tf.matmul(s_t,ws) + tf.matmul(z_t,wz) + b_q
+				# Output layer
+				logit = tf.matmul(hq,wo) + b_o
+				fill_pred = tf.constant([0.,0.,0.,0.,1.])	# one-hot vector for PAD
+				prediction = tf.cond( tf.less(tf.constant(i,dtype=tf.int64),self._decoder_unrollings),
+									  lambda: tf.nn.softmax(logit,name='prediction'),
+									  lambda: fill_pred
+								)
+				logits.append(logit)
+				self._train_predictions.append(prediction)
+			#END-FOR-DECODER-UNROLLING
+			# Loss definition
+			reshaped_dec_outputs = []
+			for i in xrange(self._max_decoder_unrollings):
+				out = tf.cond( tf.less(tf.constant(i,dtype=tf.int64),self._decoder_unrollings),
+									lambda: self._decoder_outputs[i],
+									lambda: 4*tf.ones([1],dtype=tf.int32)
+					)
+				reshaped_dec_outputs.append(out)
+			self._loss = tf.nn.seq2seq.sequence_loss(logits,
+																 targets=reshaped_dec_outputs,
+																 weights=[tf.ones([1],dtype=tf.float32)]*self._max_decoder_unrollings,
+																 #np.ones(shape=(self._max_decoder_unrollings,1),dtype=np.float32),
+																 name='train_loss')
+		###################################################################################################################
+		# TESTING
+		with tf.variable_scope('Encoder',reuse=True) as scope:
+			test_h,c1,h1 = bidirectional_rnn(fw_cell,bw_cell,
+										 self._encoder_inputs,
+										 dtype=tf.float32,
+										 sequence_length = self._encoder_unrollings*tf.ones([1],tf.int64),
+										 scope='Encoder'
+										 )
+			
+		self._test_s0 = tf.tanh( tf.matmul(h1,w_trans_s)+b_trans_s, name='test_s0')
+		self._test_c0 = tf.tanh( tf.matmul(c1,w_trans_c)+b_trans_c, name='test_c0')
+
+		test_ux_vh = precalc_Ux_Vh(self._encoder_inputs,test_h)
+
+		with tf.variable_scope('Decoder',reuse=True) as scope:
 			# embeed world vector | relu nodes
 			ey = tf.nn.relu(tf.matmul(self._test_yt,w_emby) + b_emby, name='Ey_test')
 			# context vector
 			z_t = context_vector(self._test_st,test_h,test_ux_vh,self._encoder_inputs)
-			self._next_st,self._next_ct = decoder_cell(ey, self._test_st, z_t, self._test_ct)
+			
+			state = tf.concat(1,[self._test_ct,self._test_st])
+			dec_input = tf.concat(1,[ey,z_t])
+
+			_,temp = dec_cell(dec_input, state,scope="CustomLSTMCell")
+			self._next_ct,self._next_st = tf.split(1,2,temp)
+
 			# Hidden linear layer before output, proyects z_t,y_t, and s_t to an embeeding-size layer
 			hq = ey + tf.matmul(self._next_st,ws) + tf.matmul(z_t,wz) + b_q
 			logit = tf.matmul(hq,wo) + b_o
@@ -299,7 +276,7 @@ class NavModel(object):
 			#params = tf.trainable_variables()
 			#optimizer = tf.train.GradientDescentOptimizer(self._learning_rate)
 			optimizer = tf.train.AdamOptimizer(learning_rate=self._init_learning_rate,
-														  epsilon=1e-4)
+														  epsilon=1e-1)
 			# Gradient clipping
 			#gradients = tf.gradients(self._loss,params)
 			gradients,params = zip(*optimizer.compute_gradients(self._loss))

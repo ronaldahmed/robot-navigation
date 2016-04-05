@@ -19,8 +19,8 @@ def create_model(session,config_object,force_new=False):
 	config_object: Config() instance with model parameters
 	force_new: True: creates model with fresh parameters, False: load parameters from checkpoint file
 	"""
-	#model = NavModel(config_object)
-	model = Baseline(config_object)
+	model = NavModel(config_object)
+	#model = Baseline(config_object)
 	ckpt = tf.train.get_checkpoint_state(model._train_dir)
 	if ckpt and tf.gfile.Exists(ckpt.model_checkpoint_path) and not force_new:
 		print("Reading model parameters from %s" % ckpt.model_checkpoint_path)
@@ -214,8 +214,8 @@ if __name__=="__main__":
 	folds_vDev = get_folds_vDev()
 	#folds_vTest = get_folds_vTest()
 	batch_size = 1
-	num_steps = 100001
-	steps_per_checkpoint = 2000	# How many training steps to do per checkpoint
+	num_steps = 101
+	steps_per_checkpoint = 10	# How many training steps to do per checkpoint
 	params = {
 		'dropout': [0.9],
 		'num_hidden': [500]

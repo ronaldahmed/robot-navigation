@@ -74,9 +74,6 @@ class Baseline(NavModel):
 			enc_cell = CustomLSTMCell(self._n_hidden, forget_bias=1.0, input_size=self._vocab_size)
 			enc_cell_dp = tf.nn.rnn_cell.DropoutWrapper(enc_cell,output_keep_prob=keep_prob)
 
-			def encoder(_cell, inputs,use_dropout=True):
-				st = ct = tf.Variable(tf.zeros())
-
 			hs,last_state = tf.nn.rnn(	enc_cell_dp,
 									self._encoder_inputs,
 									dtype=tf.float32,

@@ -242,16 +242,6 @@ def linear(args, output_size, bias, bias_start=0.0, scope=None):
     else:
       total_arg_size += shape[1]
 
-  def weight_initializer(shape,dtype):
-    u,_,v = np.linalg.svd(np.random.random(size=shape),full_matrices=False )
-    weight_init = []
-    if u.shape==(total_arg_size,output_size):
-      weight_init = u
-    else:
-      weight_init = v
-    dtype_np = np.float32 if dtype==tf.float32 else np.float64
-    return tf.constant(np.array(weight_init,dtype=dtype_np))
-
   # Now the computation.
   with tf.variable_scope(scope or "Linear"):
     matrix = tf.get_variable("Matrix",
@@ -267,3 +257,15 @@ def linear(args, output_size, bias, bias_start=0.0, scope=None):
         "Bias", [output_size],
         initializer=tf.constant_initializer(bias_start))
   return res + bias_term
+
+
+
+def weight_initializer(shape,dtype):
+    u,_,v = np.linalg.svd(np.random.random(size=shape),full_matrices=False )
+    weight_init = []
+    if u.shape==shape:
+      weight_init = u
+    else:
+      weight_init = v
+    dtype_np = np.float32 if dtype==tf.float32 else np.float64
+    return tf.constant(np.array(weight_init,dtype=dtype_np))
