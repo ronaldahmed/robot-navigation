@@ -270,6 +270,4 @@ def weight_initializer(shape,dtype):
       weight_init = _v
     dtype_np = np.float32 if dtype==tf.float32 else np.float64
 
-    ipdb.set_trace()
-
     return tf.constant(np.array(weight_init,dtype=dtype_np))
