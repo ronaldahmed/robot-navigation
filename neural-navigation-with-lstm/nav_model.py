@@ -175,7 +175,7 @@ class NavModel(object):
 
 		#######################################################################################################################			
 		## Decoder loop
-		with tf.name_scope('Decoder') as scope:
+		with tf.variable_scope('Decoder') as scope:
 			dec_cell = CustomLSTMCell(self._n_hidden, forget_bias=1.0, input_size=self._vocab_size)
 			dec_cell_dp = tf.nn.rnn_cell.DropoutWrapper(
 									dec_cell, output_keep_prob=keep_prob)
