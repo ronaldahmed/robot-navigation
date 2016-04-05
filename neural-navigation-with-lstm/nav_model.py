@@ -379,6 +379,8 @@ class NavModel(object):
 		outputs = session.run(output_feed,feed_dict=feed_dict)
 		predictions = outputs[4:]
 
+		ipdb.set_trace()
+		
 		correct = self.get_endpoint_accuracy(sample_inputs,predictions)
 		"""
 		temp =[]

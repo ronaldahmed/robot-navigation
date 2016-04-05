@@ -170,13 +170,19 @@ class Baseline(NavModel):
 			# Apply clipped gradients
 			self._optimizer = optimizer.apply_gradients( zip(self._clipped_gradients, params), global_step=self._global_step )
 
-		# Summaries
+		### Summaries
 		clipped_resh = [tf.reshape(tensor,[-1]) for tensor in self._clipped_gradients if tensor]
 		clipped_resh = tf.concat(0,clipped_resh)
+		# weight summaries
+		_all = [tf.reshape(tf.to_float(tensor),[-1]) for tensor in tf.trainable_variables() if tensor]
+		_all = tf.concat(0,_all)
+
+		# sum strings
 		_ = tf.scalar_summary("loss",self._loss)
 		_ = tf.scalar_summary('global_norm',self._global_norm)
 		_ = tf.scalar_summary('learning rate',self._learning_rate)
 		_ = tf.histogram_summary('clipped_gradients', clipped_resh)
+		_ = tf.histogram_summary('trainable vars', _all)
 
 		# checkpoint saver
 		#self.saver = tf.train.Saver(tf.all_variables())
