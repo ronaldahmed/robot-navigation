@@ -218,7 +218,7 @@ if __name__=="__main__":
 	steps_per_checkpoint = 10	# How many training steps to do per checkpoint
 	params = {
 		'dropout': [0.9],
-		'num_hidden': [500]
+		'num_hidden': [50]
 	}
 
 	best_params,accs = crossvalidate(folds_vDev[:1],params,batch_size,num_steps,steps_per_checkpoint)
