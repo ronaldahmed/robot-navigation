@@ -262,12 +262,12 @@ def linear(args, output_size, bias, bias_start=0.0, scope=None):
 
 
 def weight_initializer(shape,dtype):
-    u,_,v = np.linalg.svd(np.random.random(size=shape),full_matrices=False )
+    _u,_,_v = np.linalg.svd(np.random.random(size=shape),full_matrices=False )
     weight_init = []
-    if u.shape==shape:
-      weight_init = u
+    if _u.shape==tuple(shape):
+      weight_init = _u
     else:
-      weight_init = v
+      weight_init = _v
     dtype_np = np.float32 if dtype==tf.float32 else np.float64
 
     ipdb.set_trace()
