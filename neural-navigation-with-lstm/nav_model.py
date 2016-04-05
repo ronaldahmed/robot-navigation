@@ -22,7 +22,7 @@ class Config(object):
 	def __init__(self,batch_size,
 							vocab_size,
 							num_nodes=100,
-							learning_rate=10.0,
+							learning_rate=0.1,
 							learning_rate_decay_factor=0.1,
 							embedding_world_state_size=30,
 							dropout_rate=1.0
@@ -182,6 +182,7 @@ class NavModel(object):
 			# Initial states
 			s_t = tf.tanh( tf.matmul(h1,w_trans_s)+b_trans_s , name='s_0')
 			c_t = tf.tanh( tf.matmul(c1,w_trans_c)+b_trans_c , name='c_0')
+			z_t = context_vector(s_t,h_encoder,U_V_precalc,self._encoder_inputs)
 			state = tf.concat(1,[c_t,s_t])
 
 			logits = [] # logits per rolling
@@ -195,17 +196,18 @@ class NavModel(object):
 								)
 				# embeed world vector | relu nodes
 				ey = tf.nn.relu(tf.matmul(y_t,w_emby) + b_emby, name='Ey')
-				# context vector
-				z_t = context_vector(s_t,h_encoder,U_V_precalc,self._encoder_inputs)
-				
+				# merge inputs and attention prev state
 				dec_input = tf.concat(1,[ey,z_t])
 				s_t,state = dec_cell_dp(dec_input,state,scope="CustomLSTMCell")
+
+				# run attention mechanism
+				z_t = context_vector(s_t,h_encoder,U_V_precalc,self._encoder_inputs)
 
 				# Hidden linear layer before output, proyects z_t,y_t, and s_t to an embeeding-size layer
 				hq = ey + tf.matmul(s_t,ws) + tf.matmul(z_t,wz) + b_q
 				# Output layer
 				logit = tf.matmul(hq,wo) + b_o
-				fill_pred = tf.constant([0.,0.,0.,0.,1.])	# one-hot vector for PAD
+				fill_pred = tf.constant([[0.,0.,0.,0.,1.]])	# one-hot vector for PAD
 				prediction = tf.cond( tf.less(tf.constant(i,dtype=tf.int64),self._decoder_unrollings),
 									  lambda: tf.nn.softmax(logit,name='prediction'),
 									  lambda: fill_pred
@@ -379,8 +381,6 @@ class NavModel(object):
 		outputs = session.run(output_feed,feed_dict=feed_dict)
 		predictions = outputs[4:]
 
-		ipdb.set_trace()
-		
 		correct = self.get_endpoint_accuracy(sample_inputs,predictions)
 		"""
 		temp =[]
