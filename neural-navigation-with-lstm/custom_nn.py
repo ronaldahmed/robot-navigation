@@ -5,6 +5,7 @@ Custom RNN and bidirectional_RNN functions, modified for working with attention 
 from tensorflow.python.ops.rnn import _reverse_seq, _rnn_step
 import tensorflow as tf
 import numpy as np
+import ipdb
 
 SEED = 42
 np.random.seed(SEED)
@@ -268,4 +269,7 @@ def weight_initializer(shape,dtype):
     else:
       weight_init = v
     dtype_np = np.float32 if dtype==tf.float32 else np.float64
+
+    ipdb.set_trace()
+
     return tf.constant(np.array(weight_init,dtype=dtype_np))

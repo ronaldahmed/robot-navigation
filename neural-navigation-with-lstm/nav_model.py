@@ -199,7 +199,7 @@ class NavModel(object):
 				z_t = context_vector(s_t,h_encoder,U_V_precalc,self._encoder_inputs)
 				
 				dec_input = tf.concat(1,[ey,z_t])
-				s_t,state = dec_cell_dp(dec_input,state)#,scope="CustomLSTMCell")
+				s_t,state = dec_cell_dp(dec_input,state,scope="CustomLSTMCell")
 
 				# Hidden linear layer before output, proyects z_t,y_t, and s_t to an embeeding-size layer
 				hq = ey + tf.matmul(s_t,ws) + tf.matmul(z_t,wz) + b_q
@@ -251,7 +251,7 @@ class NavModel(object):
 			state = tf.concat(1,[self._test_ct,self._test_st])
 			dec_input = tf.concat(1,[ey,z_t])
 
-			_,temp = dec_cell(dec_input, state)#,scope="CustomLSTMCell")
+			_,temp = dec_cell(dec_input, state,scope="CustomLSTMCell")
 			self._next_ct,self._next_st = tf.split(1,2,temp)
 
 			# Hidden linear layer before output, proyects z_t,y_t, and s_t to an embeeding-size layer
