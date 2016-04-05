@@ -19,8 +19,8 @@ def create_model(session,config_object,force_new=False):
 	config_object: Config() instance with model parameters
 	force_new: True: creates model with fresh parameters, False: load parameters from checkpoint file
 	"""
-	#model = NavModel(config_object)
-	model = Baseline(config_object)
+	model = NavModel(config_object)
+	#model = Baseline(config_object)
 	ckpt = tf.train.get_checkpoint_state(model._train_dir)
 	if ckpt and tf.gfile.Exists(ckpt.model_checkpoint_path) and not force_new:
 		print("Reading model parameters from %s" % ckpt.model_checkpoint_path)
