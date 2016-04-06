@@ -59,10 +59,12 @@ class Baseline(NavModel):
 
 		with tf.name_scope('Weights') as scope:
 			# Encoder - decoder transition
+			"""
 			w_trans_s = tf.Variable(weight_initializer((self._n_hidden, self._n_hidden)), name='w_trans_s')
 			b_trans_s = tf.Variable(tf.zeros([1,self._n_hidden	]), name='b_trans_s')
 			w_trans_c = tf.Variable(weight_initializer((self._n_hidden, self._n_hidden)), name='w_trans_c')
 			b_trans_c = tf.Variable(tf.zeros([1,self._n_hidden	]), name='b_trans_c')
+			"""
 			# LSTM to softmax layer.
 			wo = tf.Variable(weight_initializer((self._n_hidden , self._num_actions)), name='wo')
 			b_o = tf.Variable(tf.zeros(			 [1 			    , self._num_actions]), name='bo')
@@ -85,9 +87,11 @@ class Baseline(NavModel):
 
 		#######################################################################################################################
 			# transition
+		"""
 		with tf.variable_scope('Transition') as scope:
 			st = tf.tanh( tf.matmul(h_last,w_trans_s)+b_trans_s , name='s_0')
 			ct = tf.tanh( tf.matmul(c_last,w_trans_c)+b_trans_c , name='c_0')
+		"""
 
 		#######################################################################################################################			
 		## Decoder loop
@@ -99,7 +103,8 @@ class Baseline(NavModel):
 
 			dec_outs,_ = tf.nn.rnn(dec_cell_dp,
 									 inputs = self._world_state_vectors,
-									 initial_state=tf.concat(1,[ct,st]),
+									 #initial_state=tf.concat(1,[ct,st]),
+									 initial_state=last_state,
 									 dtype=tf.float32,
 									 sequence_length = self._decoder_unrollings*tf.ones([1],tf.int64),
 									 scope=scope 																			# cell scope: Decoder/BasicLSTMCell/...
@@ -114,7 +119,7 @@ class Baseline(NavModel):
 			#	logits.append(tf.zeros([1,self._num_actions]))
 
 			# Loss definition
-			nopad_dec_outputs = [out for i,out in enumerate(self._decoder_outputs) if i<len(dec_outs)]
+			nopad_dec_outputs = self._decoder_outputs[:len(dec_outs)]
 			self._loss = tf.nn.seq2seq.sequence_loss(logits,
 																 targets=nopad_dec_outputs,
 																 weights=[tf.ones([1],dtype=tf.float32)]*self._max_decoder_unrollings,
@@ -132,10 +137,11 @@ class Baseline(NavModel):
 														 scope=scope
 														)
 
-		test_c_last, test_h_last = tf.split(1, 2, test_last_st)
+		#test_c_last, test_h_last = tf.split(1, 2, test_last_st)
+		self._test_c0, self._test_s0 = tf.split(1, 2, test_last_st)
 
-		self._test_s0 = tf.tanh( tf.matmul(test_h_last,w_trans_s)+b_trans_s , name='test_s0')
-		self._test_c0 = tf.tanh( tf.matmul(test_c_last,w_trans_c)+b_trans_c , name='test_c0')
+		#self._test_s0 = tf.tanh( tf.matmul(test_h_last,w_trans_s)+b_trans_s , name='test_s0')
+		#self._test_c0 = tf.tanh( tf.matmul(test_c_last,w_trans_c)+b_trans_c , name='test_c0')
 		
 		with tf.variable_scope('Decoder',reuse=True) as scope:
 			_,temp = dec_cell(self._test_yt,tf.concat(1, [self._test_ct, self._test_st]),scope="CustomLSTMCell")	# joins scopes -> Decoder/BasicLSTMCell
@@ -158,11 +164,11 @@ class Baseline(NavModel):
 															 self._learning_rate_decay_factor,
 															 staircase=True)
 			
-			
 			#params = tf.trainable_variables()
 			#optimizer = tf.train.GradientDescentOptimizer(self._learning_rate)
 			optimizer = tf.train.AdamOptimizer(learning_rate=self._learning_rate,
 														  epsilon=1e-1)
+			
 			# Gradient clipping
 			#gradients = tf.gradients(self._loss,params)
 			gradients,params = zip(*optimizer.compute_gradients(self._loss))
