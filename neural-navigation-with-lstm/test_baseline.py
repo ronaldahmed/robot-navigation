@@ -59,12 +59,9 @@ class Baseline(NavModel):
 
 		with tf.name_scope('Weights') as scope:
 			# Encoder - decoder transition
-			"""
-			w_trans_s = tf.Variable(weight_initializer((self._n_hidden, self._n_hidden)), name='w_trans_s')
-			b_trans_s = tf.Variable(tf.zeros([1,self._n_hidden	]), name='b_trans_s')
-			w_trans_c = tf.Variable(weight_initializer((self._n_hidden, self._n_hidden)), name='w_trans_c')
-			b_trans_c = tf.Variable(tf.zeros([1,self._n_hidden	]), name='b_trans_c')
-			"""
+			#w_trans = tf.Variable(weight_initializer((2*self._n_hidden, 2*self._n_hidden)), name='w_trans')
+			#b_trans = tf.Variable(tf.zeros([1,2*self._n_hidden	]), name='b_trans')
+			
 			# LSTM to softmax layer.
 			wo = tf.Variable(weight_initializer((self._n_hidden , self._num_actions)), name='wo')
 			b_o = tf.Variable(tf.zeros(			 [1 			    , self._num_actions]), name='bo')
@@ -82,16 +79,13 @@ class Baseline(NavModel):
 									sequence_length = self._encoder_unrollings*tf.ones([1],tf.int64),
 									scope=scope 																			# cell scope: Encoder/BasicLSTMCell/...
 									)
-			c_last, h_last = tf.split(1, 2, last_state)
 			#END-ENCODER-SCOPE
 
 		#######################################################################################################################
 			# transition
-		"""
-		with tf.variable_scope('Transition') as scope:
-			st = tf.tanh( tf.matmul(h_last,w_trans_s)+b_trans_s , name='s_0')
-			ct = tf.tanh( tf.matmul(c_last,w_trans_c)+b_trans_c , name='c_0')
-		"""
+		
+		#with tf.variable_scope('Transition') as scope:
+			#init_state = tf.matmul(last_state,w_trans)+b_trans
 
 		#######################################################################################################################			
 		## Decoder loop
@@ -103,7 +97,7 @@ class Baseline(NavModel):
 
 			dec_outs,_ = tf.nn.rnn(dec_cell_dp,
 									 inputs = self._world_state_vectors,
-									 #initial_state=tf.concat(1,[ct,st]),
+									 #initial_state=init_state,
 									 initial_state=last_state,
 									 dtype=tf.float32,
 									 sequence_length = self._decoder_unrollings*tf.ones([1],tf.int64),
@@ -156,6 +150,7 @@ class Baseline(NavModel):
 
 		with tf.variable_scope('Optimization') as scope:
 			# Optimizer setup
+			
 			self._global_step = tf.Variable(0)
 			
 			self._learning_rate = tf.train.exponential_decay(self._init_learning_rate,
@@ -166,7 +161,7 @@ class Baseline(NavModel):
 			
 			#params = tf.trainable_variables()
 			#optimizer = tf.train.GradientDescentOptimizer(self._learning_rate)
-			optimizer = tf.train.AdamOptimizer(learning_rate=self._learning_rate,
+			optimizer = tf.train.AdamOptimizer(learning_rate=self._init_learning_rate,
 														  epsilon=1e-1)
 			
 			# Gradient clipping
@@ -176,23 +171,40 @@ class Baseline(NavModel):
 			# Apply clipped gradients
 			self._optimizer = optimizer.apply_gradients( zip(self._clipped_gradients, params), global_step=self._global_step )
 
+		#########################################################################################################
 		### Summaries
 		clipped_resh = [tf.reshape(tensor,[-1]) for tensor in self._clipped_gradients if tensor]
 		clipped_resh = tf.concat(0,clipped_resh)
+
 		# weight summaries
-		_all = [tf.reshape(tf.to_float(tensor),[-1]) for tensor in tf.trainable_variables() if tensor]
-		_all = tf.concat(0,_all)
+		temp = tf.trainable_variables()
+		ow = [tf.reshape(tensor,[-1]) for tensor in temp[:2]]
+		ow = tf.concat(0,ow)
+		encw = [tf.reshape(tensor,[-1]) for tensor in temp[2:4]]
+		encw = tf.concat(0,encw)
+		decw = [tf.reshape(tensor,[-1]) for tensor in temp[4:6]]
+		decw = tf.concat(0,decw)
 
 		# sum strings
 		_ = tf.scalar_summary("loss",self._loss)
 		_ = tf.scalar_summary('global_norm',self._global_norm)
 		_ = tf.scalar_summary('learning rate',self._learning_rate)
 		_ = tf.histogram_summary('clipped_gradients', clipped_resh)
-		_ = tf.histogram_summary('trainable vars', _all)
+		_ = tf.histogram_summary('output weights', ow)
+		_ = tf.histogram_summary('encoder w', encw)
+		_ = tf.histogram_summary('decoder w', decw)
+		self._merged = tf.merge_all_summaries()
+
+		# include accuracies as summaries
+		self._train_acc = tf.placeholder(tf.float32,name='train_accuracy')
+		self._val_acc   = tf.placeholder(tf.float32,name='val_accuracy')
+		self._train_acc_sum = tf.scalar_summary("Training accuracy",self._train_acc)
+		self._val_acc_sum = tf.scalar_summary("Validation accuracy",self._val_acc)
 
 		# checkpoint saver
 		#self.saver = tf.train.Saver(tf.all_variables())
-		self._merged = tf.merge_all_summaries()
+		
+
 		
 		self.kk=0
 

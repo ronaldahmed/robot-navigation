@@ -183,8 +183,7 @@ def bidirectional_rnn(cell_fw, cell_bw, inputs,
   outputs = [tf.concat(1, [fw, bw])
              for fw, bw in zip(output_fw, output_bw)]
   # get last memory state of bw cell
-  c1,h1 = tf.split(1,2,c1h1)	# turns out that final_state is [c,h]
-  return outputs,c1,h1
+  return outputs,c1h1
 
 
 

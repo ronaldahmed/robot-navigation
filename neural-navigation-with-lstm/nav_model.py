@@ -104,11 +104,13 @@ class NavModel(object):
 			# Embedding weight
 			w_emby = tf.Variable(tf.truncated_normal([self._y_size,self._embedding_world_state_size], -0.1, 0.1), name='Ey_w')
 			b_emby = tf.Variable(tf.zeros([1, self._embedding_world_state_size]), name='Ey_b')
+			"""
 			# Encoder - decoder transition
 			w_trans_s = tf.Variable(tf.truncated_normal([self._n_hidden, self._n_hidden], -0.1, 0.1), name='w_trans_s')
 			b_trans_s = tf.Variable(tf.zeros([1,self._n_hidden	]), name='b_trans_s')
 			w_trans_c = tf.Variable(tf.truncated_normal([self._n_hidden, self._n_hidden], -0.1, 0.1), name='w_trans_c')
 			b_trans_c = tf.Variable(tf.zeros([1,self._n_hidden	]), name='b_trans_c')
+			"""
 			# Action Classifier weights and biases.
 			ws = tf.Variable(tf.truncated_normal([self._n_hidden							 , self._embedding_world_state_size	], -0.1, 0.1), name='ws')
 			wz = tf.Variable(tf.truncated_normal([2*self._n_hidden + self._vocab_size, self._embedding_world_state_size	], -0.1, 0.1), name='wz')
@@ -127,7 +129,7 @@ class NavModel(object):
 			bw_cell_dp = tf.nn.rnn_cell.DropoutWrapper(
 									bw_cell, output_keep_prob=keep_prob)
 
-			h_encoder,c1,h1 = bidirectional_rnn(fw_cell_dp,bw_cell_dp,
+			h_encoder,c1h1 = bidirectional_rnn(fw_cell_dp,bw_cell_dp,
 										 self._encoder_inputs,
 										 dtype=tf.float32,
 										 sequence_length = self._encoder_unrollings*tf.ones([1],tf.int64),
@@ -151,7 +153,7 @@ class NavModel(object):
 				# weights of each (xj,hj)
 				alpha = tf.nn.softmax(beta)	# shape: batch_size x encoder_unroll
 				alpha = tf.split(1,self._max_encoder_unrollings,alpha, name='alpha')	# list of unrolling, each elmt of shape [batch_size x 1]
-				z_t = tf.Variable(tf.zeros([1 , 2*self._n_hidden + self._vocab_size]), name='z_t')
+				z_t = tf.zeros([1 , 2*self._n_hidden + self._vocab_size])
 
 				for j in xrange(self._max_encoder_unrollings):
 					xh = tf.cond( tf.less(tf.constant(j,dtype=tf.int64),self._encoder_unrollings),
@@ -180,10 +182,12 @@ class NavModel(object):
 			dec_cell_dp = tf.nn.rnn_cell.DropoutWrapper(
 									dec_cell, output_keep_prob=keep_prob)
 			# Initial states
-			s_t = tf.tanh( tf.matmul(h1,w_trans_s)+b_trans_s , name='s_0')
-			c_t = tf.tanh( tf.matmul(c1,w_trans_c)+b_trans_c , name='c_0')
+			#s_t = tf.tanh( tf.matmul(h1,w_trans_s)+b_trans_s , name='s_0')
+			#c_t = tf.tanh( tf.matmul(c1,w_trans_c)+b_trans_c , name='c_0')
+			c_t,s_t = tf.split(1,2,c1h1)
 			z_t = context_vector(s_t,h_encoder,U_V_precalc,self._encoder_inputs)
-			state = tf.concat(1,[c_t,s_t])
+			#state = tf.concat(1,[c_t,s_t])
+			state = c1h1
 
 			logits = [] # logits per rolling
 			self._train_predictions = []
@@ -232,15 +236,16 @@ class NavModel(object):
 		###################################################################################################################
 		# TESTING
 		with tf.variable_scope('Encoder',reuse=True) as scope:
-			test_h,c1,h1 = bidirectional_rnn(fw_cell,bw_cell,
+			test_h,c1h1 = bidirectional_rnn(fw_cell,bw_cell,
 										 self._encoder_inputs,
 										 dtype=tf.float32,
 										 sequence_length = self._encoder_unrollings*tf.ones([1],tf.int64),
 										 scope='Encoder'
 										 )
 			
-		self._test_s0 = tf.tanh( tf.matmul(h1,w_trans_s)+b_trans_s, name='test_s0')
-		self._test_c0 = tf.tanh( tf.matmul(c1,w_trans_c)+b_trans_c, name='test_c0')
+		#self._test_s0 = tf.tanh( tf.matmul(h1,w_trans_s)+b_trans_s, name='test_s0')
+		#self._test_c0 = tf.tanh( tf.matmul(c1,w_trans_c)+b_trans_c, name='test_c0')
+		self._test_c0,self._test_s0 = tf.split(1,2,c1h1)
 
 		test_ux_vh = precalc_Ux_Vh(self._encoder_inputs,test_h)
 
@@ -267,38 +272,66 @@ class NavModel(object):
 		
 		with tf.variable_scope('Optimization') as scope:
 			# Optimizer setup
-			self._global_step = tf.Variable(0,trainable=False)
+			self._global_step = tf.Variable(0)
 			
-			#self._learning_rate = tf.train.exponential_decay(self._init_learning_rate,
-			#												 self._global_step, 
-			#												 5000,
-			#												 self._learning_rate_decay_factor,
-			#												 staircase=True)
+			self._learning_rate = tf.train.exponential_decay(self._init_learning_rate,
+															 self._global_step, 
+															 80000,
+															 self._learning_rate_decay_factor,
+															 staircase=True)
 			
 			
-			#params = tf.trainable_variables()
 			#optimizer = tf.train.GradientDescentOptimizer(self._learning_rate)
-			optimizer = tf.train.AdamOptimizer(learning_rate=self._init_learning_rate,
+			optimizer = tf.train.AdamOptimizer(learning_rate=self._learning_rate,
 														  epsilon=1e-1)
 			# Gradient clipping
 			#gradients = tf.gradients(self._loss,params)
 			gradients,params = zip(*optimizer.compute_gradients(self._loss))
 			self._clipped_gradients, self._global_norm = tf.clip_by_global_norm(gradients, self._max_gradient_norm)
 			# Apply clipped gradients
-			self._optimizer = optimizer.apply_gradients( zip(self._clipped_gradients, params) )#, global_step=self._global_step )
+			self._optimizer = optimizer.apply_gradients( zip(self._clipped_gradients, params) , global_step=self._global_step )
 
 		# Summaries
 		clipped_resh = [tf.reshape(tensor,[-1]) for tensor in self._clipped_gradients if tensor]
 		clipped_resh = tf.concat(0,clipped_resh)
+		# weight summaries
+		temp = tf.trainable_variables()
+		alignw = [tf.reshape(tensor,[-1]) for tensor in temp[:6]]
+		alignw = tf.concat(0,alignw)
+		eyw = [tf.reshape(tensor,[-1]) for tensor in temp[6:8]]
+		eyw = tf.concat(0,eyw)
+		how = [tf.reshape(tensor,[-1]) for tensor in temp[8:10]]
+		how = tf.concat(0,how)
+		ow = [tf.reshape(tensor,[-1]) for tensor in temp[10:13]]
+		ow = tf.concat(0,ow)
+
+		encw = [tf.reshape(tensor,[-1]) for tensor in temp[13:17]]
+		encw = tf.concat(0,encw)
+		decw = [tf.reshape(tensor,[-1]) for tensor in temp[17:19]]
+		decw = tf.concat(0,decw)
+
+		# sum strings
 		_ = tf.scalar_summary("loss",self._loss)
 		_ = tf.scalar_summary('global_norm',self._global_norm)
 		_ = tf.scalar_summary('learning rate',self._learning_rate)
 		_ = tf.histogram_summary('clipped_gradients', clipped_resh)
+		_ = tf.histogram_summary('aligner', alignw)
+		_ = tf.histogram_summary('Y embedding', eyw)
+		_ = tf.histogram_summary('hidden output layer', how)
+		_ = tf.histogram_summary('output layer', ow)
+		_ = tf.histogram_summary('encoder w', encw)
+		_ = tf.histogram_summary('decoder w', decw)
+
+		self._merged = tf.merge_all_summaries()
+
+		# include accuracies as summaries
+		self._train_acc = tf.placeholder(tf.float32,name='train_accuracy')
+		self._val_acc   = tf.placeholder(tf.float32,name='val_accuracy')
+		self._train_acc_sum = tf.scalar_summary("Training accuracy",self._train_acc)
+		self._val_acc_sum = tf.scalar_summary("Validation accuracy",self._val_acc)
 
 		# checkpoint saver
 		#self.saver = tf.train.Saver(tf.all_variables())
-		self._merged = tf.merge_all_summaries()
-		
 		
 	#END-INIT
 	##########################################################################################
@@ -376,7 +409,7 @@ class NavModel(object):
 			self._optimizer,
 			self._loss,
 			self._learning_rate,
-			self._merged,
+			self._merged
 		] + self._train_predictions
 		outputs = session.run(output_feed,feed_dict=feed_dict)
 		predictions = outputs[4:]

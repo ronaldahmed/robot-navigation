@@ -19,8 +19,8 @@ def create_model(session,config_object,force_new=False):
 	config_object: Config() instance with model parameters
 	force_new: True: creates model with fresh parameters, False: load parameters from checkpoint file
 	"""
-	#model = NavModel(config_object)
-	model = Baseline(config_object)
+	model = NavModel(config_object)
+	#model = Baseline(config_object)
 	ckpt = tf.train.get_checkpoint_state(model._train_dir)
 	if ckpt and tf.gfile.Exists(ckpt.model_checkpoint_path) and not force_new:
 		print("Reading model parameters from %s" % ckpt.model_checkpoint_path)
@@ -144,7 +144,8 @@ def train(config,batch_gens,num_steps,steps_per_checkpoint,verbose=True,force_ne
 
 			if step % steps_per_checkpoint == 0:
 				# calculate last accuracy in training set
-				train_accuracy = float(train_acc)/(step+1.0)
+				train_accuracy = float(train_acc)/steps_per_checkpoint
+				train_acc = 0
 				if verbose:
 					perplexity = math.exp(loss) if loss < 100 else float('inf')
 					print ("step %d | learning rate %.4f | step-time %.2f" % (step,model._learning_rate.eval(),step_time) )
@@ -153,9 +154,7 @@ def train(config,batch_gens,num_steps,steps_per_checkpoint,verbose=True,force_ne
 				# Save checkpoint
 				#checkpoint_path = os.path.join(model._train_dir, "neural_walker.ckpt")
 				#model.saver.save(sess, checkpoint_path, global_step=model._global_step)
-				
-				# Save summaries
-				model._writer.add_summary(summary_str,step)
+
 				# zero timer and loss.
 				step_time, loss = 0.0, 0.0
 				
@@ -176,6 +175,13 @@ def train(config,batch_gens,num_steps,steps_per_checkpoint,verbose=True,force_ne
 					perplexity = math.exp(valid_loss) if valid_loss < 100 else float('inf')
 					print ("   Validation set: loss: %.3f, perplexity: %.3f, accuracy: %.4f" % (valid_loss, perplexity, 100.0*valid_accuracy) )
 					print ("-"*80)
+				# Save summaries
+				feed_sum = {model._train_acc: train_accuracy, model._val_acc: valid_accuracy}
+				[tacc,vacc] = sess.run([model._train_acc_sum,model._val_acc_sum],feed_dict=feed_sum)
+
+				model._writer.add_summary(summary_str,step)
+				model._writer.add_summary(tacc,step)
+				model._writer.add_summary(vacc,step)
 				# early stoping criteria
 				"""
 				if len(valid_task_metrics)>3:
