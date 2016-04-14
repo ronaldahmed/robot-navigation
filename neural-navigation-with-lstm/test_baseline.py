@@ -4,7 +4,7 @@ import sys,os
 
 from nav_model import NavModel
 from utils import get_landmark_set, get_objects_set, get_batch_world_context, get_sparse_world_context, move
-from custom_nn import CustomLSTMCell
+from custom_nn import CustomLSTMCell,weight_initializer
 
 
 class Baseline(NavModel):
@@ -57,29 +57,30 @@ class Baseline(NavModel):
 		self._test_decoder_output = tf.placeholder(tf.float32,shape=[1,self._num_actions], name='test_action')
 
 
-		with tf.name_scope('Weights') as scope:
+		with tf.variable_scope('Weights',reuse=(not is_training)) as scope:
 			# Encoder - decoder transition
 			#w_trans = tf.Variable(weight_initializer((2*self._n_hidden, 2*self._n_hidden)), name='w_trans')
 			#b_trans = tf.Variable(tf.zeros([1,2*self._n_hidden	]), name='b_trans')
 			
 			# LSTM to softmax layer.
-			wo = tf.Variable(weight_initializer((self._n_hidden , self._num_actions)), name='wo')
-			b_o = tf.Variable(tf.zeros(			 [1 			    , self._num_actions]), name='bo')
+			wo = tf.get_variable('wo',shape=(self._n_hidden , self._num_actions),initializer=weight_initializer)
+			bo = tf.get_variable('bo',shape=(1 , self._num_actions),initializer=weight_initializer)
 
 		#######################################################################################################################
 		
-		with tf.variable_scope('Encoder') as scope:
+		with tf.variable_scope('Encoder',reuse=(not is_training)) as scope:
 			## Encoder
 			enc_cell = CustomLSTMCell(self._n_hidden, forget_bias=1.0, input_size=self._vocab_size)
 			enc_cell_dp = tf.nn.rnn_cell.DropoutWrapper(enc_cell,output_keep_prob=keep_prob)
 
 			hs,last_state = tf.nn.rnn(	enc_cell_dp,
 									self._encoder_inputs,
+									initial_state=weight_initializer((1,2*self._n_hidden)),
 									dtype=tf.float32,
 									sequence_length = self._encoder_unrollings*tf.ones([1],tf.int64),
 									scope=scope 																			# cell scope: Encoder/BasicLSTMCell/...
 									)
-			#END-ENCODER-SCOPE
+		#END-ENCODER-SCOPE
 
 		#######################################################################################################################
 			# transition
@@ -89,7 +90,7 @@ class Baseline(NavModel):
 
 		#######################################################################################################################			
 		## Decoder loop
-		with tf.variable_scope('Decoder') as scope:
+		with tf.variable_scope('Decoder',reuse=(not is_training)) as scope:
 			# Definition of the cell computation.
 			dec_cell = CustomLSTMCell(self._n_hidden, forget_bias=1.0, input_size=self._y_size)
 			dec_cell_dp = tf.nn.rnn_cell.DropoutWrapper(dec_cell,output_keep_prob=keep_prob)
@@ -105,7 +106,7 @@ class Baseline(NavModel):
 									)
 			self._train_predictions = []
 			for out in dec_outs:
-				logit = tf.matmul(out,wo)+b_o
+				logit = tf.matmul(out,wo)+bo
 				logits.append(logit)
 				self._train_predictions.append( tf.nn.softmax(logit,name='prediction') )
 
@@ -126,6 +127,7 @@ class Baseline(NavModel):
 		with tf.variable_scope('Encoder',reuse=True) as scope:
 			test_hs,test_last_st = tf.nn.rnn( enc_cell,
 														 self._encoder_inputs,
+														 initial_state=weight_initializer((1,2*self._n_hidden)),
 														 dtype=tf.float32,
 														 sequence_length = self._encoder_unrollings*tf.ones([1],tf.int64),
 														 scope=scope
@@ -142,16 +144,15 @@ class Baseline(NavModel):
 			self._next_ct,self._next_st = tf.split(1, 2, temp)
 
 		# softmax layer,
-		logit = tf.matmul(self._next_st,wo) + b_o
+		logit = tf.matmul(self._next_st,wo) + bo
 		self._test_prediction = tf.nn.softmax(logit,name='inf_prediction')
 		# Loss definition
 		self._test_loss = tf.nn.softmax_cross_entropy_with_logits(logit,self._test_decoder_output, name="test_loss")
 			
 
 		with tf.variable_scope('Optimization') as scope:
-			# Optimizer setup
-			
-			self._global_step = tf.Variable(0)
+			# Optimizer setup			
+			self._global_step = tf.Variable(0,trainable=False)
 			
 			self._learning_rate = tf.train.exponential_decay(self._init_learning_rate,
 															 self._global_step, 
@@ -172,48 +173,44 @@ class Baseline(NavModel):
 			self._optimizer = optimizer.apply_gradients( zip(self._clipped_gradients, params), global_step=self._global_step )
 
 		#########################################################################################################
-		### Summaries
-		clipped_resh = [tf.reshape(tensor,[-1]) for tensor in self._clipped_gradients if tensor]
-		clipped_resh = tf.concat(0,clipped_resh)
+		if is_training:
+			with tf.name_scope('Summaries') as scope:
+				### Summaries
+				clipped_resh = [tf.reshape(tensor,[-1]) for tensor in self._clipped_gradients if tensor]
+				clipped_resh = tf.concat(0,clipped_resh)
 
-		# weight summaries
-		temp = tf.trainable_variables()
-		ow = [tf.reshape(tensor,[-1]) for tensor in temp[:2]]
-		ow = tf.concat(0,ow)
-		encw = [tf.reshape(tensor,[-1]) for tensor in temp[2:4]]
-		encw = tf.concat(0,encw)
-		decw = [tf.reshape(tensor,[-1]) for tensor in temp[4:6]]
-		decw = tf.concat(0,decw)
+				# weight summaries
+				temp = tf.trainable_variables()
+				ow = [tf.reshape(tensor,[-1]) for tensor in temp[:2]]
+				ow = tf.concat(0,ow)
+				encw = [tf.reshape(tensor,[-1]) for tensor in temp[2:4]]
+				encw = tf.concat(0,encw)
+				decw = [tf.reshape(tensor,[-1]) for tensor in temp[4:6]]
+				decw = tf.concat(0,decw)
 
-		# sum strings
-		_ = tf.scalar_summary("loss",self._loss)
-		_ = tf.scalar_summary('global_norm',self._global_norm)
-		_ = tf.scalar_summary('learning rate',self._learning_rate)
-		_ = tf.histogram_summary('clipped_gradients', clipped_resh)
-		_ = tf.histogram_summary('output weights', ow)
-		_ = tf.histogram_summary('encoder w', encw)
-		_ = tf.histogram_summary('decoder w', decw)
-		self._merged = tf.merge_all_summaries()
+				# sum strings
+				_ = tf.scalar_summary("loss",self._loss)
+				_ = tf.scalar_summary('global_norm',self._global_norm)
+				_ = tf.scalar_summary('learning rate',self._learning_rate)
+				_ = tf.histogram_summary('clipped_gradients', clipped_resh)
+				_ = tf.histogram_summary('output weights', ow)
+				_ = tf.histogram_summary('encoder w', encw)
+				_ = tf.histogram_summary('decoder w', decw)
+				self._merged = tf.merge_all_summaries()
 
-		# include accuracies as summaries
-		self._train_acc = tf.placeholder(tf.float32,name='train_accuracy')
-		self._val_acc   = tf.placeholder(tf.float32,name='val_accuracy')
-		self._train_acc_sum = tf.scalar_summary("Training accuracy",self._train_acc)
-		self._val_acc_sum = tf.scalar_summary("Validation accuracy",self._val_acc)
+				# include accuracies as summaries
+				self._train_acc = tf.placeholder(tf.float32,name='train_accuracy')
+				self._val_acc   = tf.placeholder(tf.float32,name='val_accuracy')
+				self._train_acc_sum = tf.scalar_summary("Training accuracy",self._train_acc)
+				self._val_acc_sum = tf.scalar_summary("Validation accuracy",self._val_acc)
 
 		# checkpoint saver
 		#self.saver = tf.train.Saver(tf.all_variables())
+
+		self.vars_to_init = set(tf.all_variables()) - set(tf.trainable_variables())
+		self.saver = tf.train.Saver(tf.trainable_variables())
 		
 
-		
 		self.kk=0
 
-def weight_initializer(shape,dtype=tf.float32):
-	u,_,v = np.linalg.svd(np.random.random(size=shape),full_matrices=False )
-	weight_init = []
-	if u.shape==shape:
-		weight_init = u
-	else:
-		weight_init = v
-	dtype_np = np.float32 if dtype==tf.float32 else np.float64
-	return tf.constant(np.array(weight_init,dtype=dtype_np))
+

@@ -8,32 +8,11 @@ from POMDP.MarkovLoc_Grid import getMapGrid
 from POMDP.MarkovLoc_Jelly import getMapJelly
 from POMDP.MarkovLoc_L import getMapL
 
-from utils import get_landmark_set, get_objects_set, get_batch_world_context, get_sparse_world_context, move, actions_str
-from custom_nn import *
+from utils import get_landmark_set, get_objects_set, get_batch_world_context, get_sparse_world_context, move, actions_str,BeamS_Node,PAD_decode,STOP
+from custom_nn import CustomLSTMCell,weight_initializer
 
 ## max instructions length: 48
 ## max actions length: 31
-
-class Config(object):
-	encoder_unrollings = 49
-	decoder_unrollings = 31
-	num_actions = 5
-	max_gradient_norm = 5.0
-	def __init__(self,batch_size,
-							vocab_size,
-							num_nodes=100,
-							learning_rate=0.1,
-							learning_rate_decay_factor=0.1,
-							embedding_world_state_size=30,
-							dropout_rate=1.0
-							):
-		self.vocab_size = vocab_size
-		self.num_nodes = num_nodes
-		self.learning_rate = learning_rate
-		self.learning_rate_decay_factor = learning_rate_decay_factor
-		self.embedding_world_state_size = embedding_world_state_size
-		self.dropout_rate = dropout_rate
-
 
 class NavModel(object):
 	# define map objects
@@ -94,15 +73,15 @@ class NavModel(object):
 
 		with tf.name_scope('Weights') as scope:
 			# Alignment model weights
-			W_a = tf.Variable(tf.truncated_normal([self._n_hidden	 , self._n_hidden], -0.1, 0.1), name='W_a')
-			U_a = tf.Variable(tf.truncated_normal([self._vocab_size, self._n_hidden], -0.1, 0.1), name='U_a')
-			V_a = tf.Variable(tf.truncated_normal([2*self._n_hidden, self._n_hidden], -0.1, 0.1), name='V_a')
-			v_a = tf.Variable(tf.truncated_normal([self._n_hidden	 ,1], -0.1, 0.1), name='v_a')
-			tanh_bias_a = tf.Variable(tf.truncated_normal([1,1], -0.1, 0.1), name='tanh_bias_a')
+			W_a = tf.Variable(weight_initializer([self._n_hidden	 , self._n_hidden]), name='W_a')
+			U_a = tf.Variable(weight_initializer([self._vocab_size, self._n_hidden]), name='U_a')
+			V_a = tf.Variable(weight_initializer([2*self._n_hidden, self._n_hidden]), name='V_a')
+			v_a = tf.Variable(weight_initializer([self._n_hidden	 ,1]), name='v_a')
+			tanh_bias_a = tf.Variable(weight_initializer([1,1]), name='tanh_bias_a')
 			bias_a = tf.Variable(tf.zeros([1, self._n_hidden]), name='linear_bias_a')
 
 			# Embedding weight
-			w_emby = tf.Variable(tf.truncated_normal([self._y_size,self._embedding_world_state_size], -0.1, 0.1), name='Ey_w')
+			w_emby = tf.Variable(weight_initializer([self._y_size,self._embedding_world_state_size]), name='Ey_w')
 			b_emby = tf.Variable(tf.zeros([1, self._embedding_world_state_size]), name='Ey_b')
 			"""
 			# Encoder - decoder transition
@@ -112,9 +91,9 @@ class NavModel(object):
 			b_trans_c = tf.Variable(tf.zeros([1,self._n_hidden	]), name='b_trans_c')
 			"""
 			# Action Classifier weights and biases.
-			ws = tf.Variable(tf.truncated_normal([self._n_hidden							 , self._embedding_world_state_size	], -0.1, 0.1), name='ws')
-			wz = tf.Variable(tf.truncated_normal([2*self._n_hidden + self._vocab_size, self._embedding_world_state_size	], -0.1, 0.1), name='wz')
-			wo = tf.Variable(tf.truncated_normal([self._embedding_world_state_size	 , self._num_actions						], -0.1, 0.1), name='wo')
+			ws = tf.Variable(weight_initializer([self._n_hidden							  , self._embedding_world_state_size]), name='ws')
+			wz = tf.Variable(weight_initializer([2*self._n_hidden + self._vocab_size, self._embedding_world_state_size]), name='wz')
+			wo = tf.Variable(weight_initializer([self._embedding_world_state_size	  , self._num_actions					]), name='wo')
 			b_q = tf.Variable(tf.zeros([1,self._embedding_world_state_size	]), name='bq')
 			b_o = tf.Variable(tf.zeros([1,self._num_actions						]), name='bo')
 
@@ -185,8 +164,6 @@ class NavModel(object):
 			#s_t = tf.tanh( tf.matmul(h1,w_trans_s)+b_trans_s , name='s_0')
 			#c_t = tf.tanh( tf.matmul(c1,w_trans_c)+b_trans_c , name='c_0')
 			c_t,s_t = tf.split(1,2,c1h1)
-			z_t = context_vector(s_t,h_encoder,U_V_precalc,self._encoder_inputs)
-			#state = tf.concat(1,[c_t,s_t])
 			state = c1h1
 
 			logits = [] # logits per rolling
@@ -200,12 +177,12 @@ class NavModel(object):
 								)
 				# embeed world vector | relu nodes
 				ey = tf.nn.relu(tf.matmul(y_t,w_emby) + b_emby, name='Ey')
+				# run attention mechanism
+				z_t = context_vector(s_t,h_encoder,U_V_precalc,self._encoder_inputs)
+
 				# merge inputs and attention prev state
 				dec_input = tf.concat(1,[ey,z_t])
 				s_t,state = dec_cell_dp(dec_input,state,scope="CustomLSTMCell")
-
-				# run attention mechanism
-				z_t = context_vector(s_t,h_encoder,U_V_precalc,self._encoder_inputs)
 
 				# Hidden linear layer before output, proyects z_t,y_t, and s_t to an embeeding-size layer
 				hq = ey + tf.matmul(s_t,ws) + tf.matmul(z_t,wz) + b_q
@@ -272,7 +249,7 @@ class NavModel(object):
 		
 		with tf.variable_scope('Optimization') as scope:
 			# Optimizer setup
-			self._global_step = tf.Variable(0)
+			self._global_step = tf.Variable(0,trainable=False)
 			
 			self._learning_rate = tf.train.exponential_decay(self._init_learning_rate,
 															 self._global_step, 
@@ -291,50 +268,54 @@ class NavModel(object):
 			# Apply clipped gradients
 			self._optimizer = optimizer.apply_gradients( zip(self._clipped_gradients, params) , global_step=self._global_step )
 
-		# Summaries
-		clipped_resh = [tf.reshape(tensor,[-1]) for tensor in self._clipped_gradients if tensor]
-		clipped_resh = tf.concat(0,clipped_resh)
-		# weight summaries
-		temp = tf.trainable_variables()
-		alignw = [tf.reshape(tensor,[-1]) for tensor in temp[:6]]
-		alignw = tf.concat(0,alignw)
-		eyw = [tf.reshape(tensor,[-1]) for tensor in temp[6:8]]
-		eyw = tf.concat(0,eyw)
-		how = [tf.reshape(tensor,[-1]) for tensor in temp[8:10]]
-		how = tf.concat(0,how)
-		ow = [tf.reshape(tensor,[-1]) for tensor in temp[10:13]]
-		ow = tf.concat(0,ow)
+		with tf.name_scope('Summaries') as scope:
+			# Summaries
+			clipped_resh = [tf.reshape(tensor,[-1]) for tensor in self._clipped_gradients if tensor]
+			clipped_resh = tf.concat(0,clipped_resh)
+			# weight summaries
+			temp = tf.trainable_variables()
+			alignw = [tf.reshape(tensor,[-1]) for tensor in temp[:6]]
+			alignw = tf.concat(0,alignw)
+			eyw = [tf.reshape(tensor,[-1]) for tensor in temp[6:8]]
+			eyw = tf.concat(0,eyw)
+			how = [tf.reshape(tensor,[-1]) for tensor in temp[8:10]]
+			how = tf.concat(0,how)
+			ow = [tf.reshape(tensor,[-1]) for tensor in temp[10:13]]
+			ow = tf.concat(0,ow)
 
-		encw = [tf.reshape(tensor,[-1]) for tensor in temp[13:17]]
-		encw = tf.concat(0,encw)
-		decw = [tf.reshape(tensor,[-1]) for tensor in temp[17:19]]
-		decw = tf.concat(0,decw)
+			encw = [tf.reshape(tensor,[-1]) for tensor in temp[13:17]]
+			encw = tf.concat(0,encw)
+			decw = [tf.reshape(tensor,[-1]) for tensor in temp[17:19]]
+			decw = tf.concat(0,decw)
 
-		# sum strings
-		_ = tf.scalar_summary("loss",self._loss)
-		_ = tf.scalar_summary('global_norm',self._global_norm)
-		_ = tf.scalar_summary('learning rate',self._learning_rate)
-		_ = tf.histogram_summary('clipped_gradients', clipped_resh)
-		_ = tf.histogram_summary('aligner', alignw)
-		_ = tf.histogram_summary('Y embedding', eyw)
-		_ = tf.histogram_summary('hidden output layer', how)
-		_ = tf.histogram_summary('output layer', ow)
-		_ = tf.histogram_summary('encoder w', encw)
-		_ = tf.histogram_summary('decoder w', decw)
+			# sum strings
+			_ = tf.scalar_summary("loss",self._loss)
+			_ = tf.scalar_summary('global_norm',self._global_norm)
+			_ = tf.scalar_summary('learning rate',self._learning_rate)
+			_ = tf.histogram_summary('clipped_gradients', clipped_resh)
+			_ = tf.histogram_summary('aligner', alignw)
+			_ = tf.histogram_summary('Y embedding', eyw)
+			_ = tf.histogram_summary('hidden output layer', how)
+			_ = tf.histogram_summary('output layer', ow)
+			_ = tf.histogram_summary('encoder w', encw)
+			_ = tf.histogram_summary('decoder w', decw)
 
-		self._merged = tf.merge_all_summaries()
+			self._merged = tf.merge_all_summaries()
 
-		# include accuracies as summaries
-		self._train_acc = tf.placeholder(tf.float32,name='train_accuracy')
-		self._val_acc   = tf.placeholder(tf.float32,name='val_accuracy')
-		self._train_acc_sum = tf.scalar_summary("Training accuracy",self._train_acc)
-		self._val_acc_sum = tf.scalar_summary("Validation accuracy",self._val_acc)
+			# include accuracies as summaries
+			self._train_acc = tf.placeholder(tf.float32,name='train_accuracy')
+			self._val_acc   = tf.placeholder(tf.float32,name='val_accuracy')
+			self._train_acc_sum = tf.scalar_summary("Training accuracy",self._train_acc)
+			self._val_acc_sum = tf.scalar_summary("Validation accuracy",self._val_acc)
 
 		# checkpoint saver
-		#self.saver = tf.train.Saver(tf.all_variables())
+		self.saver = tf.train.Saver(tf.all_variables())
+		self.vars_to_init = set(tf.all_variables()) - set(tf.trainable_variables())
+		self.saver = tf.train.Saver(tf.trainable_variables())
 		
 	#END-INIT
-	##########################################################################################
+	##########################################################################################	
+
 	def get_end_pos(self, actions, start_pos_grid, map_name):
 		"""
 		actions: [1 x num_actions]*dec_unrolls | prob distributions of actions
@@ -430,13 +411,14 @@ class NavModel(object):
 		return (outputs[1],outputs[3],correct)	#loss, summary_str, correct
 
 
-	def inference_step(self,session,encoder_inputs,decoder_output,sample_input):
+	def step_inference(self,session,encoder_inputs,decoder_output,sample_input,beam_size=10):
 		"""
 		Performs inference with beam search in the decoder.
 		session: tensorflow session
 		encoder_inputs: [1 x K]*enc_unroll
 		decoder_output: true actions [dec_unroll]
 		sample_input: Sample instance of current sample
+		beam_size: beam size to use in beam search
 		return : loss, correct_pred (True|False)
 		"""
 		feed_dict = {}
@@ -454,29 +436,24 @@ class NavModel(object):
 
 		# initial values for cell variables
 		[st,ct] = session.run([self._test_s0,self._test_c0],feed_dict=feed_dict)
-		state = sample_input._path[0]
+		pos_state = sample_input._path[0]
 		prev_state = sample_input._path[0]
 		_map = self._maps[sample_input._map_name]
 		
-		loss = 0.0 	# must be averaged over predicted sequence length
-		npreds = 0
-		predicted_acts = []
-
-		#ipdb.set_trace()
-
-		while(True):	# keep rolling until stop criterion
+		### DECODER
+		def run_decoder_step(_st,_ct,_state,len_seq):
 			# one hot vector of current true action
 			onehot_act = np.zeros((1,self._num_actions),dtype=np.float32)
-			if npreds < n_dec_unrolls:
-				onehot_act[0,decoder_output[npreds]] = 1.0
+			if len_seq < n_dec_unrolls:
+				onehot_act[0,decoder_output[len_seq]] = 1.0
 			# get world vector for current position
-			x,y,pose = state
+			x,y,pose = _state
 			place = _map.locationByCoord[(x,y)]
 			yt = get_sparse_world_context(_map, place, pose, self._map_feature_dict, self._map_objects_dict)
 			# set placeholder for current roll
 			feed_dict[self._test_decoder_output] = onehot_act
-			feed_dict[self._test_st] = st
-			feed_dict[self._test_ct] = ct
+			feed_dict[self._test_st] = _st
+			feed_dict[self._test_ct] = _ct
 			feed_dict[self._test_yt] = yt
 
 			output_feed = [
@@ -486,28 +463,98 @@ class NavModel(object):
 				self._test_loss,
 				]
 			st,ct,prediction,step_loss = session.run(output_feed,feed_dict=feed_dict)
-			if npreds < n_dec_unrolls:
-				loss += step_loss
-			npreds += 1
-			# greedy prediction
-			pred_act = prediction.argmax()
-			predicted_acts.append(pred_act)
-			# move according to prediction
-			prev_state = state
-			state = move(state,pred_act,_map)
-			if state==-1 or npreds>=self._max_decoder_unrollings:
-				break
+			return [st,ct,prediction,step_loss]
+
+		## BEAM SEARCH vars
+		max_sequence=40
+		nodes = {} 			# nodes[v] = parent(v)
+		act_id = {} 		# act_id[node] = action id
+		dist = {}
+		node_loss={}		# node_loss[node] = loss of sequence so far
+		terminal_nodes=[]	# [(final_prob,node)]
+		Q = []				# [(log_prob,node)]
+		n_nodes = 0
+
+		#ipdb.set_trace()
+
+		# first move
+		st,ct,prediction,loss = run_decoder_step(st,ct,pos_state,0)
+		for i in range(self._num_actions):
+			logprob = np.log(prediction[0,i]+1e-12)
+			Q.append((logprob,n_nodes))
+			new_node = BeamS_Node(_id=n_nodes,
+										logprob=logprob,
+										loss=loss,
+										parent=-1,
+										pos_state=pos_state,
+										dec_st=st,dec_ct=ct,
+										dist=0,
+										act_id=i
+										)
+			nodes[n_nodes]=new_node
+			n_nodes+=1
+
+		while len(Q)!=0:	# keep rolling until stop criterion
+			new_Q = []
+			# use all current elmts in Q
+			for prob,curr_node_id in Q:
+				curr_node = nodes[curr_node_id]
+				# discard long sequences and PAD-ended sequences
+				if any([curr_node._dist>max_sequence,
+						curr_node._act_id==PAD_decode,
+						curr_node._pos_state==-1,
+					]):
+					continue
+				# check if it's terminal
+				if curr_node._act_id==STOP: # if it's STOP:
+					terminal_nodes.append((prob,curr_node_id))
+					continue
+				# get next prob dist
+				pos_state = move(curr_node._pos_state,curr_node._act_id,_map)
+				if pos_state==-1:	# invalid move in current map
+					continue
+				st,ct,new_prediction,step_loss = run_decoder_step(curr_node._dec_st,curr_node._dec_ct,pos_state,curr_node._dist)
+				new_prediction = np.log(new_prediction+1.e-12)
+
+				for i in range(self._num_actions):
+					logprob = prob+new_prediction[0,i]
+					new_Q.append((logprob,n_nodes))
+					new_node = BeamS_Node(_id=n_nodes,
+										logprob=logprob,
+										loss=step_loss,
+										parent=curr_node_id,
+										pos_state=pos_state,
+										dec_st=st,dec_ct=ct,
+										dist=curr_node._dist+1,
+										act_id=i
+										)
+					nodes[n_nodes]=new_node
+					n_nodes+=1
+			new_Q.sort(reverse=True)
+			Q = new_Q[:beam_size]
+		#END-WHILE-BEAM_SEARCH
+		terminal_nodes.sort(reverse=True)
+		pred_actions = []
+		node=nodes[terminal_nodes[0][1]]
+		pred_end_state=node._pos_state
+		loss = node._loss
+		idx = node._id
+		while idx!=-1:
+			node = nodes[idx]
+			pred_actions.append(node._act_id)
+			idx = node._parent
+		pred_actions.reverse()
 			
-		loss /= min(npreds,n_dec_unrolls)
+		loss /= len(pred_actions)
+
 		"""
 		if self.kk>1890:
 			## DEBUG
 			print("True seq: %s" % (','.join([actions_str[act] for act in decoder_output])))
-			print("Pred seq: %s" % (','.join([actions_str[act] for act in predicted_acts])))
+			print("Pred seq: %s" % (','.join([actions_str[act] for act in pred_actions])))
 
 			ipdb.set_trace()
 		self.kk+=1
 		"""
-		
+		return loss,int(end_state==pred_end_state)	# for single-sentence
 
-		return loss,int(end_state==prev_state)	# for single-sentence

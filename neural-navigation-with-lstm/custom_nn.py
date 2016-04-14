@@ -260,7 +260,7 @@ def linear(args, output_size, bias, bias_start=0.0, scope=None):
 
 
 
-def weight_initializer(shape,dtype):
+def weight_initializer(shape,dtype=tf.float32):
     _u,_,_v = np.linalg.svd(np.random.random(size=shape),full_matrices=False )
     weight_init = []
     if _u.shape==tuple(shape):

@@ -557,6 +557,38 @@ def move(state,action,_map):
 	elif action==R:
 		return xg,yg,(pose+1)% _map.NumPoses
 
+##########################################################################################
+class BeamS_Node(object):
+	def __init__(self,_id,logprob,loss,parent,pos_state,dec_st,dec_ct,dist,act_id):
+		self._id = _id
+		self._log_prob = logprob
+		self._loss = loss
+		self._parent = parent
+		self._pos_state = pos_state
+		self._dec_st = dec_st 	# [st]*num_ensembles
+		self._dec_ct = dec_ct 	# [ct]*num_ensembles
+		self._dist=dist
+		self._act_id=act_id
+		
+class Config(object):
+	encoder_unrollings = 49
+	decoder_unrollings = 31
+	num_actions = 5
+	max_gradient_norm = 5.0
+	def __init__(self,batch_size,
+							vocab_size,
+							num_nodes=100,
+							learning_rate=0.1,
+							learning_rate_decay_factor=0.1,
+							embedding_world_state_size=30,
+							dropout_rate=1.0
+							):
+		self.vocab_size = vocab_size
+		self.num_nodes = num_nodes
+		self.learning_rate = learning_rate
+		self.learning_rate_decay_factor = learning_rate_decay_factor
+		self.embedding_world_state_size = embedding_world_state_size
+		self.dropout_rate = dropout_rate
 
 ##########################################################################################
 def test_dataset(dataByMap):
