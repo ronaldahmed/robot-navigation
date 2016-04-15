@@ -141,7 +141,6 @@ def train(config,batch_gens,num_steps,steps_per_checkpoint,verbose=True,force_ne
 			step_time += (time.time() - start_time) / steps_per_checkpoint
 			loss += step_loss / steps_per_checkpoint
 			train_acc += step_corr
-			model._writer.add_summary(summary_str,step)
 
 			if step % steps_per_checkpoint == 0:
 				# calculate last accuracy in training set
@@ -170,6 +169,7 @@ def train(config,batch_gens,num_steps,steps_per_checkpoint,verbose=True,force_ne
 				feed_sum = {model._train_acc: 100.0*train_accuracy, model._val_acc: 100.0*valid_accuracy}
 				[tacc,vacc] = sess.run([model._train_acc_sum,model._val_acc_sum],feed_dict=feed_sum)
 
+				model._writer.add_summary(summary_str,step)
 				model._writer.add_summary(tacc,step)
 				model._writer.add_summary(vacc,step)
 				# early stoping criteria
